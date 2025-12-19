@@ -60,15 +60,38 @@ export const ART_STYLES = {
   }
 };
 
-// Pose/direction options
+// Pose/direction options - organized by category
 export const POSE_OPTIONS = {
-  front: { id: 'front', name: 'Front', description: 'Facing camera' },
-  back: { id: 'back', name: 'Back', description: 'Facing away' },
-  left: { id: 'left', name: 'Left', description: 'Side profile left' },
-  right: { id: 'right', name: 'Right', description: 'Side profile right' },
-  attack: { id: 'attack', name: 'Attack', description: 'Action pose' },
-  hurt: { id: 'hurt', name: 'Hurt', description: 'Damage reaction' },
-  idle: { id: 'idle', name: 'Idle', description: 'Resting pose' }
+  // Directional
+  front: { id: 'front', name: 'Front', description: 'Facing camera', category: 'direction' },
+  back: { id: 'back', name: 'Back', description: 'Facing away', category: 'direction' },
+  left: { id: 'left', name: 'Left', description: 'Side profile left', category: 'direction' },
+  right: { id: 'right', name: 'Right', description: 'Side profile right', category: 'direction' },
+  // Combat
+  attack: { id: 'attack', name: 'Attack', description: 'Combat strike', category: 'combat' },
+  hurt: { id: 'hurt', name: 'Hurt', description: 'Taking damage', category: 'combat' },
+  defend: { id: 'defend', name: 'Defend', description: 'Blocking stance', category: 'combat' },
+  cast: { id: 'cast', name: 'Cast', description: 'Magic/ability use', category: 'combat' },
+  // Movement
+  idle: { id: 'idle', name: 'Idle', description: 'Standing still', category: 'movement' },
+  walk: { id: 'walk', name: 'Walk', description: 'Walking motion', category: 'movement' },
+  run: { id: 'run', name: 'Run', description: 'Running fast', category: 'movement' },
+  jump: { id: 'jump', name: 'Jump', description: 'Mid-air jump', category: 'movement' },
+  fly: { id: 'fly', name: 'Fly', description: 'Flying/hovering', category: 'movement' },
+  swim: { id: 'swim', name: 'Swim', description: 'Swimming motion', category: 'movement' },
+  // Emotes
+  happy: { id: 'happy', name: 'Happy', description: 'Joyful expression', category: 'emote' },
+  sad: { id: 'sad', name: 'Sad', description: 'Sad expression', category: 'emote' },
+  angry: { id: 'angry', name: 'Angry', description: 'Angry expression', category: 'emote' },
+  sleep: { id: 'sleep', name: 'Sleep', description: 'Sleeping/resting', category: 'emote' },
+};
+
+// Group poses by category for UI
+export const POSE_CATEGORIES = {
+  direction: { name: 'Directional', poses: ['front', 'back', 'left', 'right'] },
+  combat: { name: 'Combat', poses: ['attack', 'hurt', 'defend', 'cast'] },
+  movement: { name: 'Movement', poses: ['idle', 'walk', 'run', 'jump', 'fly', 'swim'] },
+  emote: { name: 'Emotes', poses: ['happy', 'sad', 'angry', 'sleep'] },
 };
 
 // Color palette presets
@@ -202,13 +225,28 @@ export class NanoBananaService {
    */
   getPosePrompt(poseId) {
     const posePrompts = {
+      // Directional
       front: 'Front view, facing directly at camera, symmetrical pose.',
       back: 'Back view, facing away from camera, showing back details.',
       left: 'Side profile view facing left, full body visible.',
       right: 'Side profile view facing right, full body visible.',
-      attack: 'Dynamic attack pose, action stance with motion energy.',
-      hurt: 'Hurt/damaged pose, recoiling or flinching, showing pain.',
-      idle: 'Relaxed idle pose, natural resting stance.'
+      // Combat
+      attack: 'Dynamic attack pose, striking or slashing with weapon or claws, action lines showing motion.',
+      hurt: 'Hurt/damaged pose, recoiling or flinching, showing pain expression.',
+      defend: 'Defensive blocking stance, arms raised or shield up, braced for impact.',
+      cast: 'Casting magic or using special ability, hands glowing, mystical energy around them.',
+      // Movement
+      idle: 'Relaxed idle pose, natural resting stance, breathing animation ready.',
+      walk: 'Mid-walk pose, one foot forward, arms in walking motion, slight lean forward.',
+      run: 'Running pose, dynamic stride, arms pumping, hair/clothes flowing back.',
+      jump: 'Mid-jump pose, legs bent, arms up, defying gravity, airborne.',
+      fly: 'Flying/hovering pose, wings spread (if applicable), floating gracefully.',
+      swim: 'Swimming pose, horizontal body, arms and legs in swim stroke.',
+      // Emotes
+      happy: 'Happy joyful expression, smiling, maybe jumping or arms raised in celebration.',
+      sad: 'Sad melancholy pose, head down, shoulders slumped, tearful expression.',
+      angry: 'Angry furious pose, fists clenched, aggressive stance, fierce expression.',
+      sleep: 'Sleeping pose, eyes closed, peaceful, curled up or lying down.',
     };
     return posePrompts[poseId] || posePrompts.front;
   }
@@ -483,6 +521,81 @@ export class NanoBananaService {
    */
   delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Analyze a sprite sheet to count unique sprites/characters
+   * Uses Gemini's vision capabilities for analysis
+   * @param {string} imageBase64 - Base64 encoded image
+   * @returns {Promise<{spriteCount: number, description: string, sprites: Array}>}
+   */
+  async analyzeSpriteSheet(imageBase64) {
+    const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
+
+    const prompt = `Analyze this sprite sheet image. Count how many UNIQUE characters/creatures are shown (not counting different poses of the same character as separate).
+
+Return ONLY valid JSON with this structure:
+{
+  "spriteCount": <number of unique characters>,
+  "description": "<brief description of what you see>",
+  "sprites": [
+    {"name": "<descriptive name>", "description": "<brief description>"},
+    ...
+  ]
+}
+
+Be careful to:
+- Count unique characters, not poses (same character in different angles = 1)
+- Look for visual similarities that indicate same character
+- A grid of identical or similar sprites is likely 1 character with animation frames`;
+
+    const requestBody = {
+      contents: [{
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: imageBase64.replace(/^data:image\/\w+;base64,/, '')
+            }
+          },
+          { text: prompt }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.1, // Low temperature for more consistent counting
+      }
+    };
+
+    try {
+      const response = await fetch(`${endpoint}?key=${this.apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      
+      // Extract JSON from response
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const result = JSON.parse(jsonMatch[0]);
+        return {
+          spriteCount: result.spriteCount || 1,
+          description: result.description || 'Sprite sheet analyzed',
+          sprites: result.sprites || []
+        };
+      }
+      
+      return { spriteCount: 1, description: 'Could not analyze', sprites: [] };
+    } catch (error) {
+      console.error('[NanoBanana] Sprite sheet analysis failed:', error);
+      return { spriteCount: 1, description: 'Analysis failed', sprites: [] };
+    }
   }
 }
 

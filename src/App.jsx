@@ -12,7 +12,7 @@ import React, { useState, useCallback } from 'react';
 import { SpriteExtractor } from './services/spriteExtractor';
 import ClaudeVisionService from './services/claudeVision';
 import { DataGenerator } from './services/dataGenerator';
-import { NanoBananaService, ART_STYLES, POSE_OPTIONS, COLOR_PALETTES } from './services/nanoBanana';
+import { NanoBananaService, ART_STYLES, POSE_OPTIONS, POSE_CATEGORIES, COLOR_PALETTES } from './services/nanoBanana';
 import { colorToElement } from './data/elements';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS } from './styles/theme';
 
@@ -20,6 +20,7 @@ import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS } from './styles/theme';
 import UploadZone from './components/UploadZone';
 import MonsterDetail from './components/MonsterDetail';
 import SettingsModal from './components/SettingsModal';
+import UploadModal from './components/UploadModal';
 import { 
   LibraryIcon, 
   ForgeIcon, 
@@ -69,6 +70,14 @@ export default function App() {
   const [colorPalette, setColorPalette] = useState('original'); // original, custom, or preset name
   const [customColors, setCustomColors] = useState(['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7']); // 5 color palette
   const [forgeDragOver, setForgeDragOver] = useState(false); // Drag-drop state for Forge
+  
+  // Upload modal state
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState(null); // { file, preview }
+  
+  // Batch generation state (for sprite sheets)
+  const [batchQueue, setBatchQueue] = useState([]); // Array of sprites to process
+  const [batchProgress, setBatchProgress] = useState(null); // { current, total, currentSprite, results }
 
   // Services
   const extractor = new SpriteExtractor();
@@ -76,8 +85,82 @@ export default function App() {
   const generator = new DataGenerator();
   const nanoBanana = new NanoBananaService();
 
-  // Process uploaded sprite sheet
-  const processUpload = useCallback(async (file) => {
+  // Show upload modal when file is selected
+  const handleFileUpload = useCallback(async (file) => {
+    // Create preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setPendingUpload({
+        file,
+        preview: e.target.result,
+        filename: file.name
+      });
+      setShowUploadModal(true);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  // Analyze sprite sheet for count
+  const analyzeUploadedImage = useCallback(async () => {
+    if (!pendingUpload?.preview) return null;
+    return await nanoBanana.analyzeSpriteSheet(pendingUpload.preview);
+  }, [pendingUpload, nanoBanana]);
+
+  // Process upload after modal confirmation
+  const processUpload = useCallback(async (isSpriteSheet = false, spriteCount = 1) => {
+    if (!pendingUpload) return;
+    
+    setProcessing(true);
+    console.log('[App] Processing upload:', pendingUpload.filename, 'isSpriteSheet:', isSpriteSheet, 'count:', spriteCount);
+    
+    try {
+      // For single sprites, just store the whole image
+      if (!isSpriteSheet || spriteCount === 1) {
+        setProcessingStage('Storing sprite...');
+        
+        const newOriginal = {
+          id: `orig_${Date.now()}`,
+          filename: pendingUpload.filename,
+          uploadedAt: new Date().toISOString(),
+          base64: pendingUpload.preview,
+          isSpriteSheet: false,
+          spriteCount: 1,
+        };
+        
+        setOriginals(prev => [...prev, newOriginal]);
+        setSelectedItem(newOriginal);
+        setActiveLibraryTab('originals');
+        setProcessingStage('Uploaded 1 sprite');
+      } else {
+        // For sprite sheets, store with metadata
+        setProcessingStage('Storing sprite sheet...');
+        
+        const newOriginal = {
+          id: `orig_${Date.now()}`,
+          filename: pendingUpload.filename,
+          uploadedAt: new Date().toISOString(),
+          base64: pendingUpload.preview,
+          isSpriteSheet: true,
+          spriteCount: spriteCount,
+        };
+        
+        setOriginals(prev => [...prev, newOriginal]);
+        setSelectedItem(newOriginal);
+        setActiveLibraryTab('originals');
+        setProcessingStage(`Uploaded sprite sheet (${spriteCount} sprites)`);
+      }
+
+    } catch (error) {
+      console.error('[App] Processing failed:', error);
+      setProcessingStage(`Error: ${error.message}`);
+    } finally {
+      setProcessing(false);
+      setPendingUpload(null);
+    }
+  }, [pendingUpload]);
+
+  // Legacy process for backward compatibility
+  const processUploadLegacy = useCallback(async (file) => {
     setProcessing(true);
     console.log('[App] Starting upload processing for:', file.name);
     
@@ -678,7 +761,7 @@ export default function App() {
       {/* Main content area */}
       <div style={styles.content}>
         <div style={styles.uploadSection}>
-          <UploadZone onUpload={processUpload} processing={processing} />
+          <UploadZone onUpload={handleFileUpload} processing={processing} />
           {processingStage && <div style={styles.status}>{processingStage}</div>}
         </div>
 
@@ -692,15 +775,30 @@ export default function App() {
               src={selectedItem.base64}
               alt="Selected sprite"
               style={{
-                maxWidth: '300px',
-                maxHeight: '300px',
+                maxWidth: '400px',
+                maxHeight: '400px',
                 imageRendering: 'pixelated',
                 border: `2px solid ${COLORS.ui.border}`,
                 borderRadius: BORDER_RADIUS.md,
               }}
             />
+            {selectedItem.isSpriteSheet && (
+              <div style={{ 
+                marginTop: SPACING.sm, 
+                padding: SPACING.sm,
+                backgroundColor: `${COLORS.ui.info}20`,
+                borderRadius: BORDER_RADIUS.sm,
+                border: `1px solid ${COLORS.ui.info}40`,
+                display: 'inline-block'
+              }}>
+                <span style={{ color: COLORS.ui.info, fontSize: TYPOGRAPHY.fontSize.sm }}>
+                  Sprite Sheet - {selectedItem.spriteCount} characters detected
+                </span>
+              </div>
+            )}
             <div style={{ marginTop: SPACING.md, color: COLORS.text.secondary }}>
-              Select this sprite and go to <strong>Forge</strong> to transform it into a monster
+              Select this sprite and go to <strong>Forge</strong> to transform it
+              {selectedItem.isSpriteSheet && ` (will generate poses for all ${selectedItem.spriteCount} characters)`}
             </div>
           </div>
         )}
@@ -785,11 +883,8 @@ export default function App() {
       return;
     }
     
-    // Process the dropped file
-    await processUpload(file);
-    
-    // Switch to Forge tab and select the new sprite
-    setActiveMainTab('forge');
+    // Show upload modal for the dropped file
+    handleFileUpload(file);
   };
 
   // Save generated sprites to library
@@ -1057,22 +1152,86 @@ export default function App() {
           </div>
         </div>
 
-        {/* Pose Selection */}
+        {/* Pose Selection - Categorized */}
         <div style={styles.forgeSection}>
           <h3 style={styles.forgeSectionTitle}>Poses to Generate</h3>
-          <div style={forgeStyles.poseGrid}>
-            {Object.values(POSE_OPTIONS).map(pose => (
-              <button
-                key={pose.id}
-                style={forgeStyles.poseChip(selectedPoses.includes(pose.id))}
-                onClick={() => togglePose(pose.id)}
-              >
-                {pose.name}
-              </button>
-            ))}
-          </div>
-          <div style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.xs }}>
-            Selected: {selectedPoses.length} pose(s) - Each pose will generate a separate image
+          
+          {Object.entries(POSE_CATEGORIES).map(([catId, category]) => (
+            <div key={catId} style={{ marginBottom: SPACING.md }}>
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'space-between',
+                marginBottom: SPACING.xs 
+              }}>
+                <span style={{ 
+                  fontSize: TYPOGRAPHY.fontSize.xs, 
+                  color: COLORS.text.secondary,
+                  fontWeight: TYPOGRAPHY.fontWeight.medium 
+                }}>
+                  {category.name}
+                </span>
+                <button
+                  style={{
+                    fontSize: TYPOGRAPHY.fontSize.xs,
+                    color: COLORS.ui.active,
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                  onClick={() => {
+                    const allSelected = category.poses.every(p => selectedPoses.includes(p));
+                    if (allSelected) {
+                      setSelectedPoses(prev => prev.filter(p => !category.poses.includes(p)));
+                    } else {
+                      setSelectedPoses(prev => [...new Set([...prev, ...category.poses])]);
+                    }
+                  }}
+                >
+                  {category.poses.every(p => selectedPoses.includes(p)) ? 'Deselect all' : 'Select all'}
+                </button>
+              </div>
+              <div style={forgeStyles.poseGrid}>
+                {category.poses.map(poseId => {
+                  const pose = POSE_OPTIONS[poseId];
+                  return (
+                    <button
+                      key={pose.id}
+                      style={forgeStyles.poseChip(selectedPoses.includes(pose.id))}
+                      onClick={() => togglePose(pose.id)}
+                      title={pose.description}
+                    >
+                      {pose.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            paddingTop: SPACING.sm,
+            borderTop: `1px solid ${COLORS.ui.border}`,
+          }}>
+            <span style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.xs }}>
+              Selected: {selectedPoses.length} pose(s)
+            </span>
+            <button
+              style={{
+                fontSize: TYPOGRAPHY.fontSize.xs,
+                color: COLORS.text.muted,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+              onClick={() => setSelectedPoses([])}
+            >
+              Clear all
+            </button>
           </div>
         </div>
 
@@ -1344,6 +1503,19 @@ export default function App() {
       <SettingsModal 
         isOpen={showSettings} 
         onClose={() => setShowSettings(false)} 
+      />
+      
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={showUploadModal}
+        onClose={() => {
+          setShowUploadModal(false);
+          setPendingUpload(null);
+        }}
+        imagePreview={pendingUpload?.preview}
+        filename={pendingUpload?.filename}
+        onConfirm={processUpload}
+        onAnalyze={analyzeUploadedImage}
       />
     </div>
   );
