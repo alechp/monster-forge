@@ -527,27 +527,35 @@ export class NanoBananaService {
    * Analyze a sprite sheet to count unique sprites/characters
    * Uses Gemini's vision capabilities for analysis
    * @param {string} imageBase64 - Base64 encoded image
-   * @returns {Promise<{spriteCount: number, description: string, sprites: Array}>}
+   * @returns {Promise<{spriteCount: number, description: string, sprites: Array, gridInfo: object}>}
    */
   async analyzeSpriteSheet(imageBase64) {
     const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
 
-    const prompt = `Analyze this sprite sheet image. Count how many UNIQUE characters/creatures are shown (not counting different poses of the same character as separate).
+    const prompt = `Analyze this sprite sheet image carefully.
 
 Return ONLY valid JSON with this structure:
 {
-  "spriteCount": <number of unique characters>,
+  "spriteCount": <number of UNIQUE characters/creatures>,
   "description": "<brief description of what you see>",
+  "isGrid": <true if sprites are arranged in a regular grid pattern>,
+  "gridInfo": {
+    "rows": <number of rows if grid, null otherwise>,
+    "cols": <number of columns if grid, null otherwise>,
+    "cellWidth": <estimated pixel width of each cell if grid>,
+    "cellHeight": <estimated pixel height of each cell if grid>
+  },
   "sprites": [
-    {"name": "<descriptive name>", "description": "<brief description>"},
+    {"name": "<descriptive name>", "row": <row index 0-based>, "col": <col index 0-based>, "description": "<brief description>"},
     ...
   ]
 }
 
-Be careful to:
-- Count unique characters, not poses (same character in different angles = 1)
-- Look for visual similarities that indicate same character
-- A grid of identical or similar sprites is likely 1 character with animation frames`;
+Guidelines:
+- Count UNIQUE characters only (same character in different poses = 1 unique)
+- If it's a grid, provide grid dimensions and approximate cell size
+- For sprites array, list each unique character with its approximate grid position
+- If not a grid (scattered sprites), set isGrid to false and gridInfo values to null`;
 
     const requestBody = {
       contents: [{
@@ -587,15 +595,284 @@ Be careful to:
         return {
           spriteCount: result.spriteCount || 1,
           description: result.description || 'Sprite sheet analyzed',
-          sprites: result.sprites || []
+          sprites: result.sprites || [],
+          isGrid: result.isGrid || false,
+          gridInfo: result.gridInfo || null
         };
       }
       
-      return { spriteCount: 1, description: 'Could not analyze', sprites: [] };
+      return { spriteCount: 1, description: 'Could not analyze', sprites: [], isGrid: false, gridInfo: null };
     } catch (error) {
       console.error('[NanoBanana] Sprite sheet analysis failed:', error);
-      return { spriteCount: 1, description: 'Analysis failed', sprites: [] };
+      return { spriteCount: 1, description: 'Analysis failed', sprites: [], isGrid: false, gridInfo: null };
     }
+  }
+
+  /**
+   * Extract individual sprites from a sprite sheet using grid info
+   * @param {string} imageBase64 - Base64 encoded sprite sheet
+   * @param {object} gridInfo - Grid information from analyzeSpriteSheet
+   * @param {Array} sprites - Sprite info array from analyzeSpriteSheet
+   * @param {number} spriteCount - Expected number of sprites (for fallback estimation)
+   * @returns {Promise<Array<{base64: string, name: string, index: number}>>}
+   */
+  async extractSpritesFromSheet(imageBase64, gridInfo, sprites = [], spriteCount = 0) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const extractedSprites = [];
+        
+        // Try to get or estimate grid dimensions
+        let rows, cols, cellWidth, cellHeight;
+        
+        if (gridInfo && gridInfo.rows && gridInfo.cols) {
+          rows = gridInfo.rows;
+          cols = gridInfo.cols;
+          cellWidth = gridInfo.cellWidth || Math.floor(img.width / cols);
+          cellHeight = gridInfo.cellHeight || Math.floor(img.height / rows);
+          console.log('[NanoBanana] Using provided gridInfo:', rows, 'x', cols);
+        } else if (spriteCount > 1) {
+          // Estimate grid from sprite count and image dimensions
+          const estimated = this.estimateGridFromCount(img.width, img.height, spriteCount);
+          rows = estimated.rows;
+          cols = estimated.cols;
+          cellWidth = estimated.cellWidth;
+          cellHeight = estimated.cellHeight;
+          console.log('[NanoBanana] Estimated grid from count:', rows, 'x', cols, 'cells:', cellWidth, 'x', cellHeight);
+        } else {
+          // Try to auto-detect grid from image
+          const detected = this.detectGridFromImage(img);
+          if (detected) {
+            rows = detected.rows;
+            cols = detected.cols;
+            cellWidth = detected.cellWidth;
+            cellHeight = detected.cellHeight;
+            console.log('[NanoBanana] Auto-detected grid:', rows, 'x', cols);
+          }
+        }
+        
+        if (rows && cols) {
+          console.log('[NanoBanana] Extracting grid:', rows, 'x', cols, 'cells:', cellWidth, 'x', cellHeight);
+          
+          // If we have sprite positions, extract only those
+          if (sprites.length > 0) {
+            for (const sprite of sprites) {
+              if (sprite.row !== undefined && sprite.col !== undefined) {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = cellWidth;
+                canvas.height = cellHeight;
+                
+                ctx.drawImage(
+                  img,
+                  sprite.col * cellWidth,
+                  sprite.row * cellHeight,
+                  cellWidth,
+                  cellHeight,
+                  0, 0,
+                  cellWidth,
+                  cellHeight
+                );
+                
+                // Check if cell has content
+                const imageData = ctx.getImageData(0, 0, cellWidth, cellHeight);
+                if (this.cellHasContent(imageData)) {
+                  extractedSprites.push({
+                    base64: canvas.toDataURL('image/png'),
+                    name: sprite.name || `Sprite ${extractedSprites.length + 1}`,
+                    description: sprite.description || '',
+                    index: extractedSprites.length,
+                    gridPosition: { row: sprite.row, col: sprite.col }
+                  });
+                }
+              }
+            }
+          } else {
+            // Extract all cells that have content
+            for (let r = 0; r < rows; r++) {
+              for (let c = 0; c < cols; c++) {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = cellWidth;
+                canvas.height = cellHeight;
+                
+                ctx.drawImage(
+                  img,
+                  c * cellWidth,
+                  r * cellHeight,
+                  cellWidth,
+                  cellHeight,
+                  0, 0,
+                  cellWidth,
+                  cellHeight
+                );
+                
+                const imageData = ctx.getImageData(0, 0, cellWidth, cellHeight);
+                if (this.cellHasContent(imageData)) {
+                  extractedSprites.push({
+                    base64: canvas.toDataURL('image/png'),
+                    name: `Sprite ${extractedSprites.length + 1}`,
+                    description: '',
+                    index: extractedSprites.length,
+                    gridPosition: { row: r, col: c }
+                  });
+                }
+              }
+            }
+          }
+        } else {
+          // No grid - return the whole image as single sprite
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          
+          extractedSprites.push({
+            base64: canvas.toDataURL('image/png'),
+            name: 'Sprite',
+            description: '',
+            index: 0
+          });
+        }
+        
+        console.log('[NanoBanana] Extracted', extractedSprites.length, 'sprites from sheet');
+        resolve(extractedSprites);
+      };
+      
+      img.onerror = () => reject(new Error('Failed to load image for extraction'));
+      img.src = imageBase64;
+    });
+  }
+
+  /**
+   * Check if a cell has meaningful content (not empty/transparent/white)
+   */
+  cellHasContent(imageData) {
+    const data = imageData.data;
+    let coloredPixels = 0;
+    
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+      
+      // Count pixels that are not white/near-white and not transparent
+      if (a > 50 && !(r > 245 && g > 245 && b > 245)) {
+        coloredPixels++;
+      }
+    }
+    
+    const totalPixels = imageData.width * imageData.height;
+    // Need at least 1% non-white pixels (lowered threshold for small sprites)
+    return coloredPixels > totalPixels * 0.01 && coloredPixels > 20;
+  }
+
+  /**
+   * Estimate grid dimensions from sprite count and image size
+   */
+  estimateGridFromCount(width, height, spriteCount) {
+    // Common grid layouts for sprite sheets
+    const aspectRatio = width / height;
+    
+    // Try to find a grid that fits the sprite count
+    // Prefer wider grids (more columns than rows) for horizontal sheets
+    let bestCols = Math.ceil(Math.sqrt(spriteCount * aspectRatio));
+    let bestRows = Math.ceil(spriteCount / bestCols);
+    
+    // Ensure we have enough cells
+    while (bestCols * bestRows < spriteCount) {
+      if (bestCols < bestRows) {
+        bestCols++;
+      } else {
+        bestRows++;
+      }
+    }
+    
+    // For Pokemon-style sheets (151 sprites), try common layouts
+    if (spriteCount === 151) {
+      // 14 columns x 11 rows = 154 cells (fits 151)
+      bestCols = 14;
+      bestRows = 11;
+    } else if (spriteCount >= 100 && spriteCount <= 160) {
+      // Try to find a nice grid
+      for (let cols = 10; cols <= 20; cols++) {
+        const rows = Math.ceil(spriteCount / cols);
+        if (cols * rows >= spriteCount && cols * rows < spriteCount + cols) {
+          bestCols = cols;
+          bestRows = rows;
+          break;
+        }
+      }
+    }
+    
+    const cellWidth = Math.floor(width / bestCols);
+    const cellHeight = Math.floor(height / bestRows);
+    
+    console.log('[NanoBanana] Estimated grid for', spriteCount, 'sprites:', bestCols, 'x', bestRows);
+    
+    return {
+      rows: bestRows,
+      cols: bestCols,
+      cellWidth,
+      cellHeight
+    };
+  }
+
+  /**
+   * Try to detect grid from image by looking for repeating patterns
+   */
+  detectGridFromImage(img) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    
+    // Sample common cell sizes
+    const possibleSizes = [96, 80, 72, 64, 56, 48, 40, 32];
+    
+    for (const size of possibleSizes) {
+      const cols = Math.floor(img.width / size);
+      const rows = Math.floor(img.height / size);
+      
+      if (cols >= 2 && rows >= 2 && cols * rows >= 4 && cols * rows <= 300) {
+        // Check if this grid makes sense by sampling cells
+        let filledCells = 0;
+        const sampleCount = Math.min(20, cols * rows);
+        
+        for (let i = 0; i < sampleCount; i++) {
+          const row = Math.floor(Math.random() * rows);
+          const col = Math.floor(Math.random() * cols);
+          
+          const cellCanvas = document.createElement('canvas');
+          const cellCtx = cellCanvas.getContext('2d');
+          cellCanvas.width = size;
+          cellCanvas.height = size;
+          
+          cellCtx.drawImage(
+            img,
+            col * size, row * size, size, size,
+            0, 0, size, size
+          );
+          
+          const imageData = cellCtx.getImageData(0, 0, size, size);
+          if (this.cellHasContent(imageData)) {
+            filledCells++;
+          }
+        }
+        
+        // If most sampled cells have content, this is probably a good grid
+        if (filledCells >= sampleCount * 0.5) {
+          return {
+            rows,
+            cols,
+            cellWidth: size,
+            cellHeight: size
+          };
+        }
+      }
+    }
+    
+    return null;
   }
 }
 

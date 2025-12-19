@@ -39,7 +39,11 @@ export default function UploadModal({
   };
 
   const handleConfirm = () => {
-    onConfirm(mode === 'sheet', mode === 'sheet' ? manualCount : 1);
+    onConfirm(
+      mode === 'sheet', 
+      mode === 'sheet' ? manualCount : 1,
+      analysisResult // Pass full analysis result including gridInfo
+    );
     onClose();
   };
 

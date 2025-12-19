@@ -7,17 +7,22 @@
 import React, { useState, useEffect } from 'react';
 import { COLORS, BORDER_RADIUS, TYPOGRAPHY, SPACING } from '../styles/theme';
 import { settingsStore } from '../stores/useSettingsStore';
-import { IntegrationsIcon, ForgeIcon, InfoIcon, CloseIcon, SaveIcon, DeleteIcon, RefreshIcon } from './Icons';
+import { IntegrationsIcon, ForgeIcon, InfoIcon, CloseIcon, SaveIcon, DeleteIcon, RefreshIcon, ImageIcon } from './Icons';
 
 const TABS = [
+  { id: 'storage', label: 'Storage', Icon: ImageIcon },
   { id: 'integrations', label: 'Integrations', Icon: IntegrationsIcon },
   { id: 'forge', label: 'Forge', Icon: ForgeIcon },
   { id: 'about', label: 'About', Icon: InfoIcon },
 ];
 
 export default function SettingsModal({ isOpen, onClose }) {
-  const [activeTab, setActiveTab] = useState('integrations');
+  const [activeTab, setActiveTab] = useState('storage');
   const [settings, setSettings] = useState(settingsStore.getSettings());
+  
+  // Google API state
+  const [googleApiKey, setGoogleApiKey] = useState(settings.googleApiKey || '');
+  const [showGoogleApiKey, setShowGoogleApiKey] = useState(false);
   
   // Y14D form state
   const [y14dApiKey, setY14dApiKey] = useState(settings.y14dApiKey || '');
@@ -307,6 +312,153 @@ export default function SettingsModal({ isOpen, onClose }) {
     },
   };
   
+  const renderStorageTab = () => (
+    <div>
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Storage Mode</div>
+        <div style={styles.sectionDesc}>
+          Choose where to save your sprites and transformations.
+        </div>
+        
+        {/* Storage Mode Selection */}
+        <div style={styles.formGroup}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: SPACING.sm }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: SPACING.md,
+              padding: SPACING.md,
+              backgroundColor: settings.storageMode === 'local' ? `${COLORS.ui.active}20` : COLORS.background.card,
+              border: `2px solid ${settings.storageMode === 'local' ? COLORS.ui.active : COLORS.ui.border}`,
+              borderRadius: BORDER_RADIUS.md,
+              cursor: 'pointer',
+            }}>
+              <input
+                type="radio"
+                name="storageMode"
+                value="local"
+                checked={settings.storageMode === 'local'}
+                onChange={() => settingsStore.setStorageMode('local')}
+                style={{ marginTop: '4px' }}
+              />
+              <div>
+                <div style={{ fontWeight: 'bold', color: COLORS.text.primary, marginBottom: SPACING.xs }}>
+                  Local Storage (Browser)
+                </div>
+                <div style={{ fontSize: TYPOGRAPHY.fontSize.xs, color: COLORS.text.secondary }}>
+                  Sprites are saved in your browser's localStorage. Data persists across refreshes but is limited to this browser/device.
+                </div>
+              </div>
+            </label>
+            
+            <label style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: SPACING.md,
+              padding: SPACING.md,
+              backgroundColor: settings.storageMode === 'y14d' ? `${COLORS.ui.active}20` : COLORS.background.card,
+              border: `2px solid ${settings.storageMode === 'y14d' ? COLORS.ui.active : COLORS.ui.border}`,
+              borderRadius: BORDER_RADIUS.md,
+              cursor: 'pointer',
+              opacity: settings.y14dApiKey ? 1 : 0.6,
+            }}>
+              <input
+                type="radio"
+                name="storageMode"
+                value="y14d"
+                checked={settings.storageMode === 'y14d'}
+                onChange={() => settingsStore.setStorageMode('y14d')}
+                disabled={!settings.y14dApiKey}
+                style={{ marginTop: '4px' }}
+              />
+              <div>
+                <div style={{ fontWeight: 'bold', color: COLORS.text.primary, marginBottom: SPACING.xs }}>
+                  Y14D Cloud Sync
+                </div>
+                <div style={{ fontSize: TYPOGRAPHY.fontSize.xs, color: COLORS.text.secondary }}>
+                  Sync sprites to your Y14D archive. Access from any device. {!settings.y14dApiKey && '(Configure API key in Integrations tab)'}
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+        
+        {/* Local Storage Info */}
+        {settings.storageMode === 'local' && (
+          <div style={styles.infoBox}>
+            <div style={styles.infoTitle}>Local Storage Notes:</div>
+            <ul style={styles.infoList}>
+              <li>Data is stored in your browser's localStorage</li>
+              <li>Storage limit is typically 5-10MB depending on browser</li>
+              <li>Data will be lost if you clear browser data</li>
+              <li>Not synced across devices or browsers</li>
+            </ul>
+            
+            <div style={{ marginTop: SPACING.md }}>
+              <button
+                style={styles.button('danger')}
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to clear all local data? This cannot be undone.')) {
+                    settingsStore.clearLocalStorage();
+                    window.location.reload();
+                  }
+                }}
+              >
+                <DeleteIcon size={14} />
+                Clear All Local Data
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Google API Key Section */}
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Google API Key</div>
+        <div style={styles.sectionDesc}>
+          Required for sprite generation (Gemini/Nano Banana). Get your key from{' '}
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={styles.link}>
+            Google AI Studio ↗
+          </a>
+        </div>
+        
+        <div style={styles.formGroup}>
+          <label style={styles.label}>API Key</label>
+          <div style={styles.inputWrapper}>
+            <input
+              type={showGoogleApiKey ? 'text' : 'password'}
+              value={googleApiKey}
+              onChange={(e) => setGoogleApiKey(e.target.value)}
+              placeholder="AIzaSy..."
+              style={styles.input}
+            />
+            <button
+              style={styles.toggleButton}
+              onClick={() => setShowGoogleApiKey(!showGoogleApiKey)}
+            >
+              {showGoogleApiKey ? '👁️' : '👁️‍🗨️'}
+            </button>
+          </div>
+        </div>
+        
+        <div style={styles.buttonRow}>
+          <button
+            style={styles.button('primary')}
+            onClick={() => {
+              settingsStore.updateSettings({ googleApiKey });
+              // Also save to env for NanoBanana service
+              window.localStorage.setItem('GOOGLE_API_KEY', googleApiKey);
+            }}
+            disabled={googleApiKey === (settings.googleApiKey || '')}
+          >
+            <SaveIcon size={14} />
+            Save API Key
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  
   const renderIntegrationsTab = () => (
     <div>
       <div style={styles.section}>
@@ -527,6 +679,8 @@ export default function SettingsModal({ isOpen, onClose }) {
   
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'storage':
+        return renderStorageTab();
       case 'integrations':
         return renderIntegrationsTab();
       case 'forge':

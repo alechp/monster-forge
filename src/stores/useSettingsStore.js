@@ -6,12 +6,20 @@
  */
 
 const STORAGE_KEY = 'monster-forge-settings';
+const ORIGINALS_STORAGE_KEY = 'monster-forge-originals';
+const TRANSFORMATIONS_STORAGE_KEY = 'monster-forge-transformations';
 
 // Default settings
 const defaultSettings = {
+  // Storage mode: 'local' (localStorage) or 'y14d' (Y14D cloud sync)
+  storageMode: 'local',
+  
   // Y14D Integration
   y14dApiKey: null,
   y14dBaseUrl: 'http://localhost:4740',
+  
+  // Google API Key
+  googleApiKey: null,
   
   // Forge settings
   autoAnalyze: true,
@@ -116,6 +124,65 @@ export const settingsStore = {
   // Clear Y14D configuration
   clearY14DConfig() {
     this.updateSettings({ y14dApiKey: null });
+  },
+  
+  // Storage mode methods
+  getStorageMode() {
+    return currentSettings.storageMode || 'local';
+  },
+  
+  setStorageMode(mode) {
+    this.updateSettings({ storageMode: mode });
+  },
+  
+  // Local storage for sprites
+  saveOriginals(originals) {
+    if (currentSettings.storageMode !== 'local') return;
+    try {
+      localStorage.setItem(ORIGINALS_STORAGE_KEY, JSON.stringify(originals));
+    } catch (error) {
+      console.error('[SettingsStore] Failed to save originals:', error);
+    }
+  },
+  
+  loadOriginals() {
+    if (currentSettings.storageMode !== 'local') return [];
+    try {
+      const stored = localStorage.getItem(ORIGINALS_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch (error) {
+      console.error('[SettingsStore] Failed to load originals:', error);
+      return [];
+    }
+  },
+  
+  saveTransformations(transformations) {
+    if (currentSettings.storageMode !== 'local') return;
+    try {
+      localStorage.setItem(TRANSFORMATIONS_STORAGE_KEY, JSON.stringify(transformations));
+    } catch (error) {
+      console.error('[SettingsStore] Failed to save transformations:', error);
+    }
+  },
+  
+  loadTransformations() {
+    if (currentSettings.storageMode !== 'local') return [];
+    try {
+      const stored = localStorage.getItem(TRANSFORMATIONS_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch (error) {
+      console.error('[SettingsStore] Failed to load transformations:', error);
+      return [];
+    }
+  },
+  
+  clearLocalStorage() {
+    try {
+      localStorage.removeItem(ORIGINALS_STORAGE_KEY);
+      localStorage.removeItem(TRANSFORMATIONS_STORAGE_KEY);
+    } catch (error) {
+      console.error('[SettingsStore] Failed to clear local storage:', error);
+    }
   },
 };
 
