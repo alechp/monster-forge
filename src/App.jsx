@@ -12,7 +12,7 @@ import React, { useState, useCallback } from 'react';
 import { SpriteExtractor } from './services/spriteExtractor';
 import ClaudeVisionService from './services/claudeVision';
 import { DataGenerator } from './services/dataGenerator';
-import { NanoBananaService, ART_STYLES, POSE_OPTIONS } from './services/nanoBanana';
+import { NanoBananaService, ART_STYLES, POSE_OPTIONS, COLOR_PALETTES } from './services/nanoBanana';
 import { colorToElement } from './data/elements';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS } from './styles/theme';
 
@@ -20,11 +20,22 @@ import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS } from './styles/theme';
 import UploadZone from './components/UploadZone';
 import MonsterDetail from './components/MonsterDetail';
 import SettingsModal from './components/SettingsModal';
+import { 
+  LibraryIcon, 
+  ForgeIcon, 
+  SettingsIcon, 
+  DeleteIcon, 
+  RefreshIcon, 
+  SaveIcon,
+  ImageIcon,
+  MonsterIcon,
+  SparkleIcon
+} from './components/Icons';
 
 // Main navigation tabs
 const MAIN_TABS = [
-  { id: 'library', label: 'Library', icon: '📚' },
-  { id: 'forge', label: 'Forge', icon: '⚒️' },
+  { id: 'library', label: 'Library', Icon: LibraryIcon },
+  { id: 'forge', label: 'Forge', Icon: ForgeIcon },
 ];
 
 // Library sub-tabs
@@ -53,6 +64,9 @@ export default function App() {
   const [selectedPoses, setSelectedPoses] = useState(['front', 'back', 'left', 'right']);
   const [customPrompt, setCustomPrompt] = useState('');
   const [generatedSprites, setGeneratedSprites] = useState({}); // { poseId: base64 }
+  const [creativity, setCreativity] = useState(50); // 0-100: 0=exact copy, 100=wild reinterpretation
+  const [colorPalette, setColorPalette] = useState('original'); // original, custom, or preset name
+  const [customColors, setCustomColors] = useState(['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7']); // 5 color palette
 
   // Services
   const extractor = new SpriteExtractor();
@@ -496,7 +510,7 @@ export default function App() {
           {currentLibraryItems.length === 0 ? (
             <div style={styles.emptyState}>
               <div style={styles.emptyIcon}>
-                {activeLibraryTab === 'originals' ? '🖼️' : '🐲'}
+                {activeLibraryTab === 'originals' ? <ImageIcon size={48} /> : <MonsterIcon size={48} />}
               </div>
               <div style={styles.emptyText}>
                 {activeLibraryTab === 'originals' 
@@ -509,7 +523,8 @@ export default function App() {
                   : 'Use the Forge to create monsters'}
               </div>
             </div>
-          ) : (
+          ) : activeLibraryTab === 'originals' ? (
+            // Originals: simple grid
             <div style={styles.itemGrid}>
               {currentLibraryItems.map(item => (
                 <div
@@ -519,13 +534,10 @@ export default function App() {
                 >
                   <button
                     style={styles.itemDeleteButton}
-                    onClick={(e) => activeLibraryTab === 'originals' 
-                      ? deleteOriginal(item.id, e) 
-                      : deleteTransformation(item.id, e)
-                    }
+                    onClick={(e) => deleteOriginal(item.id, e)}
                     title="Delete"
                   >
-                    ×
+                    <DeleteIcon size={12} color="#fff" />
                   </button>
                   <img
                     src={item.base64 || item.baseSprite}
@@ -537,6 +549,125 @@ export default function App() {
                   </div>
                 </div>
               ))}
+            </div>
+          ) : (
+            // Transformations: grouped by session
+            <div style={{ display: 'flex', flexDirection: 'column', gap: SPACING.md }}>
+              {(() => {
+                // Group by sessionId
+                const groups = {};
+                const ungrouped = [];
+                
+                transformations.forEach(item => {
+                  if (item.sessionId) {
+                    if (!groups[item.sessionId]) {
+                      groups[item.sessionId] = {
+                        sessionId: item.sessionId,
+                        sessionName: item.sessionName || 'Generated Set',
+                        items: []
+                      };
+                    }
+                    groups[item.sessionId].items.push(item);
+                  } else {
+                    ungrouped.push(item);
+                  }
+                });
+                
+                const groupList = Object.values(groups);
+                
+                return (
+                  <>
+                    {/* Grouped items */}
+                    {groupList.map(group => (
+                      <div key={group.sessionId} style={{
+                        backgroundColor: COLORS.background.card,
+                        borderRadius: BORDER_RADIUS.md,
+                        border: `1px solid ${COLORS.ui.border}`,
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          padding: `${SPACING.xs} ${SPACING.sm}`,
+                          backgroundColor: COLORS.background.tertiary,
+                          fontSize: TYPOGRAPHY.fontSize.xs,
+                          color: COLORS.text.secondary,
+                          fontWeight: TYPOGRAPHY.fontWeight.medium,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
+                        }}>
+                          <span>{group.sessionName}</span>
+                          <span style={{ color: COLORS.text.muted }}>({group.items.length})</span>
+                        </div>
+                        <div style={{ ...styles.itemGrid, padding: SPACING.sm, gap: SPACING.xs }}>
+                          {group.items.map(item => (
+                            <div
+                              key={item.id}
+                              style={{
+                                ...styles.itemCard(selectedItem?.id === item.id),
+                                padding: SPACING.xs
+                              }}
+                              onClick={() => setSelectedItem(item)}
+                            >
+                              <button
+                                style={styles.itemDeleteButton}
+                                onClick={(e) => deleteTransformation(item.id, e)}
+                                title="Delete"
+                              >
+                                <DeleteIcon size={10} color="#fff" />
+                              </button>
+                              <img
+                                src={item.base64 || item.baseSprite}
+                                alt={item.name}
+                                style={{ ...styles.itemSprite, marginBottom: 0 }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {/* Ungrouped items */}
+                    {ungrouped.length > 0 && (
+                      <div>
+                        {groupList.length > 0 && (
+                          <div style={{
+                            fontSize: TYPOGRAPHY.fontSize.xs,
+                            color: COLORS.text.muted,
+                            marginBottom: SPACING.xs
+                          }}>
+                            Other
+                          </div>
+                        )}
+                        <div style={styles.itemGrid}>
+                          {ungrouped.map(item => (
+                            <div
+                              key={item.id}
+                              style={styles.itemCard(selectedItem?.id === item.id)}
+                              onClick={() => setSelectedItem(item)}
+                            >
+                              <button
+                                style={styles.itemDeleteButton}
+                                onClick={(e) => deleteTransformation(item.id, e)}
+                                title="Delete"
+                              >
+                                <DeleteIcon size={12} color="#fff" />
+                              </button>
+                              <img
+                                src={item.base64 || item.baseSprite}
+                                alt={item.name}
+                                style={styles.itemSprite}
+                              />
+                              <div style={styles.itemName}>
+                                {item.name || 'Sprite'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -592,6 +723,69 @@ export default function App() {
     );
   };
 
+  // Regenerate a single pose
+  const regenerateSingle = async (poseId) => {
+    if (!selectedItem) return;
+    
+    setProcessing(true);
+    setProcessingStage(`Regenerating ${poseId}...`);
+    
+    const sourceImage = selectedItem.base64 || selectedItem.baseSprite;
+    
+    try {
+      const genOptions = {
+        customPrompt,
+        creativity,
+        colorPalette,
+        customColors: colorPalette === 'custom' ? customColors : []
+      };
+      
+      const newSprite = await nanoBanana.generateWithStyle(sourceImage, selectedStyle, poseId, genOptions);
+      
+      if (newSprite) {
+        setGeneratedSprites(prev => ({ ...prev, [poseId]: newSprite }));
+        setProcessingStage(`Regenerated ${poseId}!`);
+      } else {
+        setProcessingStage(`Failed to regenerate ${poseId}`);
+      }
+    } catch (error) {
+      console.error(`[App] Regenerate ${poseId} failed:`, error);
+      setProcessingStage(`Error: ${error.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Save generated sprites to library
+  const saveGeneratedSprites = () => {
+    if (Object.keys(generatedSprites).length === 0) return;
+    
+    const sessionId = `session_${Date.now()}`;
+    const sessionName = `${selectedItem?.name || selectedItem?.filename || 'Sprite'} - ${ART_STYLES[selectedStyle].name}`;
+    
+    const newTransformations = Object.entries(generatedSprites)
+      .filter(([_, sprite]) => sprite !== null)
+      .map(([poseId, sprite]) => ({
+        id: `gen_${Date.now()}_${poseId}`,
+        name: `${selectedItem?.name || 'Sprite'} (${ART_STYLES[selectedStyle].name} - ${poseId})`,
+        baseSprite: sprite,
+        base64: sprite,
+        originalId: selectedItem?.id,
+        style: selectedStyle,
+        pose: poseId,
+        createdAt: new Date().toISOString(),
+        primaryElement: selectedItem?.primaryElement || 'Unknown',
+        sessionId,
+        sessionName,
+        genOptions: { creativity, colorPalette, customColors, customPrompt }
+      }));
+    
+    if (newTransformations.length > 0) {
+      setTransformations(prev => [...prev, ...newTransformations]);
+      setProcessingStage(`Saved ${newTransformations.length} sprite(s) to library!`);
+    }
+  };
+
   // Generate sprites with selected style and poses
   const generateSprites = async () => {
     if (!selectedItem || selectedPoses.length === 0) return;
@@ -602,10 +796,19 @@ export default function App() {
     const sourceImage = selectedItem.base64 || selectedItem.baseSprite;
     
     try {
+      // Build generation options
+      const genOptions = {
+        customPrompt,
+        creativity,
+        colorPalette,
+        customColors: colorPalette === 'custom' ? customColors : []
+      };
+      
       const results = await nanoBanana.generatePoseSet(
         sourceImage,
         selectedStyle,
         selectedPoses,
+        genOptions,
         (progress) => {
           if (progress.error) {
             setProcessingStage(`Error: ${progress.error}`);
@@ -627,24 +830,8 @@ export default function App() {
       
       setGeneratedSprites(results);
       
-      // Save generated sprites to transformations
-      const newTransformations = Object.entries(results)
-        .filter(([_, sprite]) => sprite !== null)
-        .map(([poseId, sprite]) => ({
-          id: `gen_${Date.now()}_${poseId}`,
-          name: `${selectedItem.name || 'Sprite'} (${ART_STYLES[selectedStyle].name} - ${poseId})`,
-          baseSprite: sprite,
-          base64: sprite,
-          originalId: selectedItem.id,
-          style: selectedStyle,
-          pose: poseId,
-          createdAt: new Date().toISOString(),
-          primaryElement: selectedItem.primaryElement || 'Unknown'
-        }));
-      
-      if (newTransformations.length > 0) {
-        setTransformations(prev => [...prev, ...newTransformations]);
-      }
+      // Note: Sprites are NOT auto-saved anymore
+      // User clicks "Save to Library" button to save them
       
     } catch (error) {
       console.error('[App] Sprite generation failed:', error);
@@ -823,6 +1010,77 @@ export default function App() {
           </div>
         </div>
 
+        {/* Creativity Slider */}
+        <div style={styles.forgeSection}>
+          <h3 style={styles.forgeSectionTitle}>Creativity Level</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: SPACING.md }}>
+            <span style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.xs, minWidth: '60px' }}>Exact Copy</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={creativity}
+              onChange={(e) => setCreativity(Number(e.target.value))}
+              style={{ flex: 1, cursor: 'pointer' }}
+            />
+            <span style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.xs, minWidth: '80px', textAlign: 'right' }}>Wild Remix</span>
+          </div>
+          <div style={{ color: COLORS.text.secondary, fontSize: TYPOGRAPHY.fontSize.sm, marginTop: SPACING.xs, textAlign: 'center' }}>
+            {creativity <= 10 ? 'Exact match - only pose changes' :
+             creativity <= 30 ? 'Very faithful - minor artistic freedom' :
+             creativity <= 50 ? 'Balanced - moderate interpretation' :
+             creativity <= 70 ? 'Creative - loose inspiration' :
+             creativity <= 90 ? 'Reimagined - significant changes' :
+             'Wild - dramatic reinterpretation'}
+            {' '}({creativity}%)
+          </div>
+        </div>
+
+        {/* Color Palette */}
+        <div style={styles.forgeSection}>
+          <h3 style={styles.forgeSectionTitle}>Color Palette</h3>
+          <div style={forgeStyles.poseGrid}>
+            {Object.values(COLOR_PALETTES).map(palette => (
+              <button
+                key={palette.id}
+                style={forgeStyles.poseChip(colorPalette === palette.id)}
+                onClick={() => setColorPalette(palette.id)}
+              >
+                {palette.name}
+              </button>
+            ))}
+          </div>
+          
+          {/* Custom Color Picker */}
+          {colorPalette === 'custom' && (
+            <div style={{ marginTop: SPACING.md, display: 'flex', gap: SPACING.sm, alignItems: 'center' }}>
+              {customColors.map((color, index) => (
+                <input
+                  key={index}
+                  type="color"
+                  value={color}
+                  onChange={(e) => {
+                    const newColors = [...customColors];
+                    newColors[index] = e.target.value;
+                    setCustomColors(newColors);
+                  }}
+                  style={{ 
+                    width: '40px', 
+                    height: '40px', 
+                    border: `2px solid ${COLORS.ui.border}`,
+                    borderRadius: BORDER_RADIUS.sm,
+                    cursor: 'pointer',
+                    padding: 0
+                  }}
+                />
+              ))}
+              <span style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.xs, marginLeft: SPACING.sm }}>
+                Click to change colors
+              </span>
+            </div>
+          )}
+        </div>
+
         {/* Custom Prompt */}
         <div style={styles.forgeSection}>
           <h3 style={styles.forgeSectionTitle}>Custom Details (Optional)</h3>
@@ -859,10 +1117,37 @@ export default function App() {
         {/* Generated Results */}
         {Object.keys(generatedSprites).length > 0 && (
           <div style={styles.forgeSection}>
-            <h3 style={styles.forgeSectionTitle}>Generated Sprites</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md }}>
+              <h3 style={{ ...styles.forgeSectionTitle, marginBottom: 0 }}>Generated Sprites</h3>
+              <div style={{ display: 'flex', gap: SPACING.sm }}>
+                <button
+                  style={{
+                    ...styles.forgeButton,
+                    padding: `${SPACING.xs} ${SPACING.md}`,
+                    fontSize: TYPOGRAPHY.fontSize.xs,
+                  }}
+                  onClick={generateSprites}
+                  disabled={processing}
+                >
+                  <RefreshIcon size={14} /> Regenerate All
+                </button>
+                <button
+                  style={{
+                    ...styles.forgeButton,
+                    padding: `${SPACING.xs} ${SPACING.md}`,
+                    fontSize: TYPOGRAPHY.fontSize.xs,
+                    backgroundColor: COLORS.ui.success,
+                  }}
+                  onClick={saveGeneratedSprites}
+                  disabled={processing}
+                >
+                  <SaveIcon size={14} /> Save to Library
+                </button>
+              </div>
+            </div>
             <div style={forgeStyles.resultsGrid}>
               {Object.entries(generatedSprites).map(([poseId, sprite]) => (
-                <div key={poseId} style={forgeStyles.resultCard}>
+                <div key={poseId} style={{ ...forgeStyles.resultCard, position: 'relative' }}>
                   {sprite ? (
                     <>
                       <img
@@ -871,17 +1156,54 @@ export default function App() {
                         style={forgeStyles.resultImage}
                       />
                       <div style={forgeStyles.resultLabel}>{POSE_OPTIONS[poseId]?.name || poseId}</div>
+                      <button
+                        style={{
+                          marginTop: SPACING.xs,
+                          padding: `${SPACING.xs} ${SPACING.sm}`,
+                          backgroundColor: 'transparent',
+                          border: `1px solid ${COLORS.ui.border}`,
+                          borderRadius: BORDER_RADIUS.sm,
+                          color: COLORS.text.secondary,
+                          fontSize: TYPOGRAPHY.fontSize.xs,
+                          cursor: processing ? 'not-allowed' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: SPACING.xs,
+                          width: '100%',
+                          justifyContent: 'center',
+                        }}
+                        onClick={() => regenerateSingle(poseId)}
+                        disabled={processing}
+                      >
+                        <RefreshIcon size={12} /> Redo
+                      </button>
                     </>
                   ) : (
                     <div style={{ padding: SPACING.lg, color: COLORS.text.muted }}>
-                      Failed
+                      <div>Failed</div>
+                      <button
+                        style={{
+                          marginTop: SPACING.sm,
+                          padding: `${SPACING.xs} ${SPACING.sm}`,
+                          backgroundColor: COLORS.ui.active,
+                          border: 'none',
+                          borderRadius: BORDER_RADIUS.sm,
+                          color: '#000',
+                          fontSize: TYPOGRAPHY.fontSize.xs,
+                          cursor: processing ? 'not-allowed' : 'pointer',
+                        }}
+                        onClick={() => regenerateSingle(poseId)}
+                        disabled={processing}
+                      >
+                        Retry
+                      </button>
                     </div>
                   )}
                 </div>
               ))}
             </div>
             <div style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.xs, marginTop: SPACING.sm }}>
-              Generated sprites have been saved to your Transformations library.
+              Click "Save to Library" to add these sprites to your Transformations.
             </div>
           </div>
         )}
@@ -930,7 +1252,7 @@ export default function App() {
                 style={styles.mainNavButton(activeMainTab === tab.id)}
                 onClick={() => setActiveMainTab(tab.id)}
               >
-                <span>{tab.icon}</span>
+                <tab.Icon size={18} />
                 <span>{tab.label}</span>
               </button>
             ))}
@@ -941,7 +1263,8 @@ export default function App() {
           style={styles.settingsButton}
           onClick={() => setShowSettings(true)}
         >
-          ⚙️ Settings
+          <SettingsIcon size={16} />
+          Settings
         </button>
       </header>
 

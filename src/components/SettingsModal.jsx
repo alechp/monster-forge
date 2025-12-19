@@ -7,11 +7,12 @@
 import React, { useState, useEffect } from 'react';
 import { COLORS, BORDER_RADIUS, TYPOGRAPHY, SPACING } from '../styles/theme';
 import { settingsStore } from '../stores/useSettingsStore';
+import { IntegrationsIcon, ForgeIcon, InfoIcon, CloseIcon, SaveIcon, DeleteIcon, RefreshIcon } from './Icons';
 
 const TABS = [
-  { id: 'integrations', label: 'Integrations', icon: '🔌' },
-  { id: 'forge', label: 'Forge', icon: '⚒️' },
-  { id: 'about', label: 'About', icon: 'ℹ️' },
+  { id: 'integrations', label: 'Integrations', Icon: IntegrationsIcon },
+  { id: 'forge', label: 'Forge', Icon: ForgeIcon },
+  { id: 'about', label: 'About', Icon: InfoIcon },
 ];
 
 export default function SettingsModal({ isOpen, onClose }) {
@@ -91,9 +92,8 @@ export default function SettingsModal({ isOpen, onClose }) {
       zIndex: 1000,
     },
     modal: {
-      width: '90%',
-      maxWidth: '800px',
-      maxHeight: '85vh',
+      width: '800px',
+      height: '600px',
       backgroundColor: COLORS.background.secondary,
       borderRadius: BORDER_RADIUS.lg,
       border: `1px solid ${COLORS.ui.border}`,
@@ -383,21 +383,24 @@ export default function SettingsModal({ isOpen, onClose }) {
             onClick={handleTestConnection}
             disabled={!y14dApiKey || testStatus === 'testing'}
           >
-            {testStatus === 'testing' ? '⏳ Testing...' : '🔗 Test Connection'}
+            <RefreshIcon size={14} />
+            {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
           </button>
           <button
             style={styles.button('primary')}
             onClick={handleSaveY14D}
             disabled={!y14dApiKey || !hasChanges}
           >
-            💾 Save
+            <SaveIcon size={14} />
+            Save
           </button>
           {settings.y14dApiKey && (
             <button
               style={styles.button('danger')}
               onClick={handleClearY14D}
             >
-              🗑️ Clear
+              <DeleteIcon size={14} />
+              Clear
             </button>
           )}
         </div>
@@ -540,7 +543,7 @@ export default function SettingsModal({ isOpen, onClose }) {
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
           <div style={styles.title}>Settings</div>
-          <button style={styles.closeButton} onClick={onClose}>×</button>
+          <button style={styles.closeButton} onClick={onClose}><CloseIcon size={20} /></button>
         </div>
         
         <div style={styles.body}>
@@ -551,7 +554,7 @@ export default function SettingsModal({ isOpen, onClose }) {
                 style={styles.tabButton(activeTab === tab.id)}
                 onClick={() => setActiveTab(tab.id)}
               >
-                <span>{tab.icon}</span>
+                <tab.Icon size={18} />
                 <span>{tab.label}</span>
               </button>
             ))}

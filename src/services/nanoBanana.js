@@ -71,6 +71,20 @@ export const POSE_OPTIONS = {
   idle: { id: 'idle', name: 'Idle', description: 'Resting pose' }
 };
 
+// Color palette presets
+export const COLOR_PALETTES = {
+  original: { id: 'original', name: 'Original', description: 'Keep original colors' },
+  warm: { id: 'warm', name: 'Warm', description: 'Reds, oranges, yellows' },
+  cool: { id: 'cool', name: 'Cool', description: 'Blues, teals, purples' },
+  neon: { id: 'neon', name: 'Neon', description: 'Vibrant electric colors' },
+  pastel: { id: 'pastel', name: 'Pastel', description: 'Soft, light colors' },
+  dark: { id: 'dark', name: 'Dark', description: 'Moody, deep colors' },
+  earth: { id: 'earth', name: 'Earth', description: 'Natural browns & greens' },
+  monochrome: { id: 'monochrome', name: 'Monochrome', description: 'Single color shades' },
+  retro: { id: 'retro', name: 'Retro', description: 'Limited 8-bit palette' },
+  custom: { id: 'custom', name: 'Custom', description: 'Pick your own colors' }
+};
+
 export class NanoBananaService {
   constructor(options = {}) {
     this.apiKey = options.apiKey || process.env.REACT_APP_GOOGLE_API_KEY;
@@ -99,9 +113,20 @@ export class NanoBananaService {
    * @param {string} referenceBase64 - Reference image (required)
    * @param {string} styleId - Art style ID from ART_STYLES
    * @param {string} poseId - Pose ID from POSE_OPTIONS
-   * @param {string} customPrompt - Optional custom prompt additions
+   * @param {object} options - Additional generation options
+   * @param {string} options.customPrompt - Optional custom prompt additions
+   * @param {number} options.creativity - 0-100 scale for deviation from original (0=exact, 100=wild)
+   * @param {string} options.colorPalette - 'original', 'custom', or preset name
+   * @param {string[]} options.customColors - Array of hex colors for custom palette
    */
-  async generateWithStyle(referenceBase64, styleId = 'pixel', poseId = 'front', customPrompt = '') {
+  async generateWithStyle(referenceBase64, styleId = 'pixel', poseId = 'front', options = {}) {
+    const { 
+      customPrompt = '', 
+      creativity = 50, 
+      colorPalette = 'original', 
+      customColors = [] 
+    } = options;
+    
     const style = ART_STYLES[styleId] || ART_STYLES.pixel;
     const pose = POSE_OPTIONS[poseId] || POSE_OPTIONS.front;
     
@@ -109,6 +134,12 @@ export class NanoBananaService {
     let prompt = `Generate a ${pose.name.toLowerCase()} view of this creature in ${style.name.toLowerCase()} style. `;
     prompt += `${style.prompt}. `;
     prompt += this.getPosePrompt(poseId);
+    
+    // Add creativity/deviation instructions
+    prompt += ' ' + this.getCreativityPrompt(creativity);
+    
+    // Add color palette instructions
+    prompt += ' ' + this.getColorPalettePrompt(colorPalette, customColors);
     
     if (customPrompt) {
       prompt += ` Additional details: ${customPrompt}`;
@@ -123,6 +154,47 @@ export class NanoBananaService {
     }
     
     return this.generateViaGoogleAPI(prompt, referenceBase64);
+  }
+
+  /**
+   * Get creativity/deviation prompt based on slider value
+   */
+  getCreativityPrompt(creativity) {
+    if (creativity <= 10) {
+      return 'CRITICAL: Match the reference image as closely as possible. Same exact colors, proportions, and details. Only change the pose/angle.';
+    } else if (creativity <= 30) {
+      return 'Stay very close to the reference image. Maintain the same colors and overall design. Minor artistic interpretation allowed.';
+    } else if (creativity <= 50) {
+      return 'Use the reference as strong inspiration. Keep the same general design and color scheme but allow moderate artistic freedom.';
+    } else if (creativity <= 70) {
+      return 'Use the reference as loose inspiration. Feel free to reinterpret colors, proportions, and details while keeping the essence.';
+    } else if (creativity <= 90) {
+      return 'Treat the reference as a starting point only. Reimagine the creature with significant creative freedom in style, colors, and design.';
+    } else {
+      return 'Create a wild reinterpretation. Only use the general concept of the creature. Feel free to dramatically change everything.';
+    }
+  }
+
+  /**
+   * Get color palette prompt
+   */
+  getColorPalettePrompt(paletteType, customColors = []) {
+    const palettes = {
+      original: 'Use the same color palette as the reference image.',
+      warm: 'Use a warm color palette: reds, oranges, yellows, warm browns.',
+      cool: 'Use a cool color palette: blues, teals, purples, cool grays.',
+      neon: 'Use vibrant neon colors: electric pink, cyan, lime green, bright purple.',
+      pastel: 'Use soft pastel colors: light pink, baby blue, mint, lavender, cream.',
+      dark: 'Use a dark, moody palette: deep purples, dark blues, black, crimson.',
+      earth: 'Use earthy natural colors: browns, greens, tans, forest colors.',
+      monochrome: 'Use a monochromatic color scheme with shades of a single color.',
+      retro: 'Use retro game palette: limited colors like NES/SNES era games.',
+      custom: customColors.length > 0 
+        ? `Use ONLY these specific colors: ${customColors.join(', ')}. Mix and shade these colors only.`
+        : 'Use the same color palette as the reference image.'
+    };
+    
+    return palettes[paletteType] || palettes.original;
   }
 
   /**
@@ -144,8 +216,13 @@ export class NanoBananaService {
   /**
    * Batch generate multiple poses in a single style
    * Note: Gemini has strict rate limits (~10 requests/minute for free tier)
+   * @param {string} referenceBase64 - Reference image
+   * @param {string} styleId - Art style ID
+   * @param {string[]} poses - Array of pose IDs to generate
+   * @param {object} options - Generation options
+   * @param {function} onProgress - Progress callback
    */
-  async generatePoseSet(referenceBase64, styleId, poses = ['front', 'back', 'left', 'right'], onProgress = null) {
+  async generatePoseSet(referenceBase64, styleId, poses = ['front', 'back', 'left', 'right'], options = {}, onProgress = null) {
     const results = {};
     let completed = 0;
     let failed = 0;
@@ -161,7 +238,7 @@ export class NanoBananaService {
           });
         }
         
-        results[poseId] = await this.generateWithStyle(referenceBase64, styleId, poseId);
+        results[poseId] = await this.generateWithStyle(referenceBase64, styleId, poseId, options);
         completed++;
         
         // Longer delay between requests to avoid rate limits (6 seconds)
