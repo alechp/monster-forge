@@ -48,6 +48,82 @@ const LIBRARY_TABS = [
   { id: 'transformations', label: 'Transformations' },
 ];
 
+// Animation presets with frame mappings
+const ANIMATION_PRESETS = {
+  idle: {
+    name: 'Idle',
+    description: 'Subtle breathing animation',
+    suggestedFrames: ['front'],
+    defaultFps: 2,
+    loop: true,
+    minFrames: 1,
+  },
+  walk: {
+    name: 'Walk Cycle',
+    description: '4-directional walking',
+    suggestedFrames: ['left', 'front', 'right', 'back'],
+    defaultFps: 8,
+    loop: true,
+    minFrames: 2,
+  },
+  run: {
+    name: 'Run Cycle',
+    description: 'Fast movement animation',
+    suggestedFrames: ['left', 'front', 'right', 'back'],
+    defaultFps: 12,
+    loop: true,
+    minFrames: 2,
+  },
+  attack: {
+    name: 'Attack',
+    description: 'Combat strike animation',
+    suggestedFrames: ['front', 'attack'],
+    defaultFps: 10,
+    loop: false,
+    minFrames: 2,
+  },
+  hurt: {
+    name: 'Hurt',
+    description: 'Damage reaction',
+    suggestedFrames: ['front', 'hurt'],
+    defaultFps: 6,
+    loop: false,
+    minFrames: 2,
+  },
+  cast: {
+    name: 'Cast Spell',
+    description: 'Magic ability animation',
+    suggestedFrames: ['front', 'cast'],
+    defaultFps: 6,
+    loop: false,
+    minFrames: 2,
+  },
+  jump: {
+    name: 'Jump',
+    description: 'Jumping animation',
+    suggestedFrames: ['front', 'jump', 'front'],
+    defaultFps: 8,
+    loop: false,
+    minFrames: 2,
+  },
+  emote: {
+    name: 'Emote',
+    description: 'Emotional expression',
+    suggestedFrames: ['happy', 'sad', 'angry'],
+    defaultFps: 4,
+    loop: true,
+    minFrames: 2,
+  },
+  custom: {
+    name: 'Custom',
+    description: 'Build your own animation',
+    suggestedFrames: [],
+    defaultFps: 8,
+    loop: true,
+    minFrames: 1,
+  },
+};
+
 export default function App() {
   // Navigation state
   const [activeMainTab, setActiveMainTab] = useState('library');
@@ -110,6 +186,16 @@ export default function App() {
   
   // Toast notification state
   const [toast, setToast] = useState(null); // { message, type, action?, actionLabel? }
+  
+  // Animation generation state
+  const [forgeSection, setForgeSection] = useState('sprites'); // 'sprites' | 'animation'
+  const [animationType, setAnimationType] = useState('idle');
+  const [animationFrames, setAnimationFrames] = useState([]); // Array of { id, spriteId, base64, duration }
+  const [animationFps, setAnimationFps] = useState(8);
+  const [animationLoop, setAnimationLoop] = useState(true);
+  const [animationPlaying, setAnimationPlaying] = useState(false);
+  const [animationCurrentFrame, setAnimationCurrentFrame] = useState(0);
+  const [generatedAnimations, setGeneratedAnimations] = useState([]); // Saved animations
 
   // Services
   const extractor = new SpriteExtractor();
@@ -173,6 +259,28 @@ export default function App() {
       setSelectedExtractedSprites([]);
     }
   }, [selectedItem?.id, selectedItem?.isSpriteSheet, selectedItem?.hasExtractedSprites, originals]);
+
+  // Animation playback effect
+  useEffect(() => {
+    if (!animationPlaying || animationFrames.length === 0) return;
+    
+    const interval = setInterval(() => {
+      setAnimationCurrentFrame(prev => {
+        const next = prev + 1;
+        if (next >= animationFrames.length) {
+          if (animationLoop) {
+            return 0;
+          } else {
+            setAnimationPlaying(false);
+            return prev;
+          }
+        }
+        return next;
+      });
+    }, 1000 / animationFps);
+    
+    return () => clearInterval(interval);
+  }, [animationPlaying, animationFps, animationLoop, animationFrames.length]);
 
   // Show upload modal when file is selected
   const handleFileUpload = useCallback(async (file) => {
@@ -1907,6 +2015,162 @@ export default function App() {
     setProcessingStage('');
   };
 
+  // Generate animated GIF from frames
+  const generateAnimationGIF = async () => {
+    if (animationFrames.length < 2) return;
+    
+    setProcessing(true);
+    setProcessingStage('Generating GIF...');
+    
+    try {
+      // Dynamic import of gif.js
+      const GIF = (await import('gif.js')).default;
+      
+      // Load all frame images
+      const loadImage = (base64) => {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = base64;
+        });
+      };
+      
+      const images = await Promise.all(animationFrames.map(f => loadImage(f.base64)));
+      
+      // Get dimensions from first image
+      const width = images[0].naturalWidth || 64;
+      const height = images[0].naturalHeight || 64;
+      
+      const gif = new GIF({
+        workers: 2,
+        quality: 10,
+        width,
+        height,
+        repeat: animationLoop ? 0 : -1,
+        workerScript: '/gif.worker.js',
+      });
+      
+      const frameDelay = Math.round(1000 / animationFps);
+      
+      images.forEach((img) => {
+        gif.addFrame(img, { delay: frameDelay, copy: true });
+      });
+      
+      gif.on('finished', (blob) => {
+        // Download the GIF
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${animationType}_animation_${Date.now()}.gif`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        setProcessing(false);
+        setToast({
+          message: 'GIF exported successfully!',
+          type: 'success',
+        });
+        setTimeout(() => setToast(null), 4000);
+      });
+      
+      gif.on('progress', (p) => {
+        setProcessingStage(`Generating GIF... ${Math.round(p * 100)}%`);
+      });
+      
+      gif.render();
+      
+    } catch (error) {
+      console.error('GIF generation failed:', error);
+      setProcessing(false);
+      setProcessingStage('');
+      
+      // Fallback: Generate sprite sheet instead
+      setToast({
+        message: 'GIF generation unavailable. Try exporting as sprite sheet instead.',
+        type: 'error',
+      });
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
+  // Generate sprite sheet from frames
+  const generateSpriteSheet = () => {
+    if (animationFrames.length < 2) return;
+    
+    setProcessing(true);
+    setProcessingStage('Generating sprite sheet...');
+    
+    try {
+      // Create a temporary canvas to measure sprite dimensions
+      const tempImg = new Image();
+      tempImg.onload = () => {
+        const frameWidth = tempImg.naturalWidth || 64;
+        const frameHeight = tempImg.naturalHeight || 64;
+        
+        // Create horizontal sprite sheet
+        const canvas = document.createElement('canvas');
+        const columns = animationFrames.length;
+        canvas.width = frameWidth * columns;
+        canvas.height = frameHeight;
+        const ctx = canvas.getContext('2d');
+        
+        // Track loaded images
+        let loadedCount = 0;
+        const images = [];
+        
+        animationFrames.forEach((frame, index) => {
+          const img = new Image();
+          img.onload = () => {
+            images[index] = img;
+            loadedCount++;
+            
+            if (loadedCount === animationFrames.length) {
+              // All images loaded, draw them
+              images.forEach((loadedImg, idx) => {
+                ctx.drawImage(loadedImg, idx * frameWidth, 0, frameWidth, frameHeight);
+              });
+              
+              // Download the sprite sheet
+              canvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${animationType}_spritesheet_${animationFrames.length}frames_${Date.now()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                setProcessing(false);
+                setProcessingStage('');
+                setToast({
+                  message: `Sprite sheet exported! (${columns} frames, ${canvas.width}x${canvas.height}px)`,
+                  type: 'success',
+                });
+                setTimeout(() => setToast(null), 4000);
+              }, 'image/png');
+            }
+          };
+          img.src = frame.base64;
+        });
+      };
+      tempImg.src = animationFrames[0].base64;
+      
+    } catch (error) {
+      console.error('Sprite sheet generation failed:', error);
+      setProcessing(false);
+      setProcessingStage('');
+      setToast({
+        message: 'Failed to generate sprite sheet',
+        type: 'error',
+      });
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
   // Render Forge view
   const renderForge = () => {
     const selectedOriginal = selectedItem && originals.find(o => o.id === selectedItem.id);
@@ -2011,6 +2275,57 @@ export default function App() {
           Transform your sprites into different art styles and generate pose variants for game-ready sprite sheets.
         </p>
         
+        {/* Forge Section Tabs */}
+        <div style={{
+          display: 'flex',
+          gap: SPACING.sm,
+          marginBottom: SPACING.lg,
+          borderBottom: `1px solid ${COLORS.ui.border}`,
+          paddingBottom: SPACING.sm,
+        }}>
+          <button
+            style={{
+              padding: `${SPACING.sm} ${SPACING.lg}`,
+              backgroundColor: forgeSection === 'sprites' ? COLORS.ui.active : 'transparent',
+              border: 'none',
+              borderRadius: BORDER_RADIUS.md,
+              color: forgeSection === 'sprites' ? '#000' : COLORS.text.secondary,
+              fontFamily: TYPOGRAPHY.fontFamily.system,
+              fontSize: TYPOGRAPHY.fontSize.sm,
+              fontWeight: TYPOGRAPHY.fontWeight.medium,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: SPACING.sm,
+            }}
+            onClick={() => setForgeSection('sprites')}
+          >
+            <SparkleIcon size={16} /> Sprite Generation
+          </button>
+          <button
+            style={{
+              padding: `${SPACING.sm} ${SPACING.lg}`,
+              backgroundColor: forgeSection === 'animation' ? COLORS.ui.active : 'transparent',
+              border: 'none',
+              borderRadius: BORDER_RADIUS.md,
+              color: forgeSection === 'animation' ? '#000' : COLORS.text.secondary,
+              fontFamily: TYPOGRAPHY.fontFamily.system,
+              fontSize: TYPOGRAPHY.fontSize.sm,
+              fontWeight: TYPOGRAPHY.fontWeight.medium,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: SPACING.sm,
+            }}
+            onClick={() => setForgeSection('animation')}
+          >
+            <RefreshIcon size={16} /> Animation Generation
+          </button>
+        </div>
+        
+        {/* SPRITE GENERATION SECTION */}
+        {forgeSection === 'sprites' && (
+          <>
         {/* Selected Item Preview / Drop Zone */}
         <div 
           style={{
@@ -2953,6 +3268,504 @@ export default function App() {
             Analyzes sprite and generates stats, abilities, and lore (no image changes)
           </div>
         </div>
+          </>
+        )}
+        
+        {/* ANIMATION GENERATION SECTION */}
+        {forgeSection === 'animation' && (
+          <div>
+            {/* Source Sprites for Animation */}
+            <div style={styles.forgeSection}>
+              <h3 style={styles.forgeSectionTitle}>Source Sprites</h3>
+              <p style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.sm, marginBottom: SPACING.md }}>
+                Select sprites from your generated sprites or library to create animations.
+              </p>
+              
+              {/* Show generated sprites if available */}
+              {Object.keys(generatedSprites).length > 0 ? (
+                <div>
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center',
+                    marginBottom: SPACING.sm 
+                  }}>
+                    <span style={{ color: COLORS.text.secondary, fontSize: TYPOGRAPHY.fontSize.sm }}>
+                      Available Sprites ({Object.keys(generatedSprites).filter(k => generatedSprites[k]).length})
+                    </span>
+                    <button
+                      style={{
+                        padding: `${SPACING.xs} ${SPACING.sm}`,
+                        backgroundColor: COLORS.ui.active,
+                        border: 'none',
+                        borderRadius: BORDER_RADIUS.sm,
+                        color: '#000',
+                        fontSize: TYPOGRAPHY.fontSize.xs,
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => {
+                        // Auto-fill frames from generated sprites
+                        const frames = Object.entries(generatedSprites)
+                          .filter(([_, sprite]) => sprite)
+                          .map(([key, sprite], idx) => ({
+                            id: `frame_${idx}_${Date.now()}`,
+                            spriteId: key,
+                            base64: typeof sprite === 'object' ? sprite.sprite : sprite,
+                            duration: 1000 / animationFps,
+                            label: POSE_OPTIONS[key]?.name || key,
+                          }));
+                        setAnimationFrames(frames);
+                      }}
+                    >
+                      Use All Generated Sprites
+                    </button>
+                  </div>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))',
+                    gap: SPACING.sm,
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                    padding: SPACING.sm,
+                    backgroundColor: COLORS.background.primary,
+                    borderRadius: BORDER_RADIUS.md,
+                  }}>
+                    {Object.entries(generatedSprites).map(([key, sprite]) => {
+                      if (!sprite) return null;
+                      const spriteImg = typeof sprite === 'object' ? sprite.sprite : sprite;
+                      const isInFrames = animationFrames.some(f => f.spriteId === key);
+                      return (
+                        <div
+                          key={key}
+                          onClick={() => {
+                            if (isInFrames) {
+                              setAnimationFrames(prev => prev.filter(f => f.spriteId !== key));
+                            } else {
+                              setAnimationFrames(prev => [...prev, {
+                                id: `frame_${Date.now()}_${key}`,
+                                spriteId: key,
+                                base64: spriteImg,
+                                duration: 1000 / animationFps,
+                                label: POSE_OPTIONS[key]?.name || key,
+                              }]);
+                            }
+                          }}
+                          style={{
+                            cursor: 'pointer',
+                            padding: SPACING.xs,
+                            backgroundColor: isInFrames ? COLORS.ui.active : COLORS.background.card,
+                            borderRadius: BORDER_RADIUS.sm,
+                            border: isInFrames ? '2px solid #fff' : '2px solid transparent',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <img
+                            src={spriteImg}
+                            alt={key}
+                            style={{
+                              width: '100%',
+                              aspectRatio: '1',
+                              objectFit: 'contain',
+                              imageRendering: 'pixelated',
+                              backgroundColor: '#fff',
+                              borderRadius: BORDER_RADIUS.sm,
+                            }}
+                          />
+                          <div style={{
+                            fontSize: '10px',
+                            color: isInFrames ? '#000' : COLORS.text.muted,
+                            textAlign: 'center',
+                            marginTop: '2px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {POSE_OPTIONS[key]?.name || key}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div style={{
+                  padding: SPACING.lg,
+                  backgroundColor: COLORS.background.primary,
+                  borderRadius: BORDER_RADIUS.md,
+                  textAlign: 'center',
+                  color: COLORS.text.muted,
+                }}>
+                  <p>No generated sprites available.</p>
+                  <p style={{ fontSize: TYPOGRAPHY.fontSize.sm, marginTop: SPACING.sm }}>
+                    Switch to "Sprite Generation" tab to generate poses first, or select sprites from your Library.
+                  </p>
+                </div>
+              )}
+            </div>
+            
+            {/* Animation Type Selection */}
+            <div style={styles.forgeSection}>
+              <h3 style={styles.forgeSectionTitle}>Animation Type</h3>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                gap: SPACING.sm,
+              }}>
+                {Object.entries(ANIMATION_PRESETS).map(([key, preset]) => (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      setAnimationType(key);
+                      setAnimationFps(preset.defaultFps);
+                      setAnimationLoop(preset.loop);
+                    }}
+                    style={{
+                      padding: SPACING.sm,
+                      backgroundColor: animationType === key ? COLORS.ui.active : COLORS.background.card,
+                      border: `2px solid ${animationType === key ? COLORS.ui.active : COLORS.ui.border}`,
+                      borderRadius: BORDER_RADIUS.md,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <div style={{
+                      fontFamily: TYPOGRAPHY.fontFamily.system,
+                      fontSize: TYPOGRAPHY.fontSize.sm,
+                      fontWeight: TYPOGRAPHY.fontWeight.medium,
+                      color: animationType === key ? '#000' : COLORS.text.primary,
+                    }}>
+                      {preset.name}
+                    </div>
+                    <div style={{
+                      fontSize: TYPOGRAPHY.fontSize.xs,
+                      color: animationType === key ? '#333' : COLORS.text.muted,
+                      marginTop: '2px',
+                    }}>
+                      {preset.description}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Animation Settings */}
+            <div style={styles.forgeSection}>
+              <h3 style={styles.forgeSectionTitle}>Animation Settings</h3>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: SPACING.md,
+              }}>
+                <div>
+                  <label style={{ display: 'block', color: COLORS.text.secondary, fontSize: TYPOGRAPHY.fontSize.sm, marginBottom: SPACING.xs }}>
+                    Frame Rate (FPS)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    value={animationFps}
+                    onChange={(e) => setAnimationFps(Math.max(1, Math.min(60, parseInt(e.target.value) || 8)))}
+                    style={{
+                      width: '100%',
+                      padding: SPACING.sm,
+                      backgroundColor: COLORS.background.primary,
+                      border: `1px solid ${COLORS.ui.border}`,
+                      borderRadius: BORDER_RADIUS.sm,
+                      color: COLORS.text.primary,
+                      fontFamily: TYPOGRAPHY.fontFamily.system,
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: COLORS.text.secondary, fontSize: TYPOGRAPHY.fontSize.sm, marginBottom: SPACING.xs }}>
+                    Duration
+                  </label>
+                  <div style={{
+                    padding: SPACING.sm,
+                    backgroundColor: COLORS.background.primary,
+                    border: `1px solid ${COLORS.ui.border}`,
+                    borderRadius: BORDER_RADIUS.sm,
+                    color: COLORS.text.primary,
+                  }}>
+                    {animationFrames.length > 0 
+                      ? `${(animationFrames.length / animationFps).toFixed(2)}s`
+                      : '0s'
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: COLORS.text.secondary, fontSize: TYPOGRAPHY.fontSize.sm, marginBottom: SPACING.xs }}>
+                    Loop
+                  </label>
+                  <button
+                    onClick={() => setAnimationLoop(!animationLoop)}
+                    style={{
+                      width: '100%',
+                      padding: SPACING.sm,
+                      backgroundColor: animationLoop ? COLORS.ui.success : COLORS.background.primary,
+                      border: `1px solid ${animationLoop ? COLORS.ui.success : COLORS.ui.border}`,
+                      borderRadius: BORDER_RADIUS.sm,
+                      color: animationLoop ? '#fff' : COLORS.text.secondary,
+                      cursor: 'pointer',
+                      fontFamily: TYPOGRAPHY.fontFamily.system,
+                    }}
+                  >
+                    {animationLoop ? 'Yes' : 'No'}
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            {/* Frame Sequence */}
+            <div style={styles.forgeSection}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md }}>
+                <h3 style={{ ...styles.forgeSectionTitle, marginBottom: 0 }}>
+                  Frame Sequence ({animationFrames.length} frames)
+                </h3>
+                <button
+                  onClick={() => setAnimationFrames([])}
+                  style={{
+                    padding: `${SPACING.xs} ${SPACING.sm}`,
+                    backgroundColor: 'transparent',
+                    border: `1px solid ${COLORS.ui.border}`,
+                    borderRadius: BORDER_RADIUS.sm,
+                    color: COLORS.text.secondary,
+                    fontSize: TYPOGRAPHY.fontSize.xs,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Clear All
+                </button>
+              </div>
+              
+              {animationFrames.length > 0 ? (
+                <div style={{
+                  display: 'flex',
+                  gap: SPACING.sm,
+                  overflowX: 'auto',
+                  padding: SPACING.sm,
+                  backgroundColor: COLORS.background.primary,
+                  borderRadius: BORDER_RADIUS.md,
+                  minHeight: '120px',
+                  alignItems: 'center',
+                }}>
+                  {animationFrames.map((frame, index) => (
+                    <div
+                      key={frame.id}
+                      style={{
+                        flexShrink: 0,
+                        width: '80px',
+                        backgroundColor: COLORS.background.card,
+                        borderRadius: BORDER_RADIUS.sm,
+                        padding: SPACING.xs,
+                        position: 'relative',
+                      }}
+                    >
+                      <div style={{
+                        position: 'absolute',
+                        top: '-8px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        backgroundColor: COLORS.ui.active,
+                        color: '#000',
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        padding: '2px 6px',
+                        borderRadius: BORDER_RADIUS.sm,
+                      }}>
+                        {index + 1}
+                      </div>
+                      <img
+                        src={frame.base64}
+                        alt={`Frame ${index + 1}`}
+                        style={{
+                          width: '100%',
+                          aspectRatio: '1',
+                          objectFit: 'contain',
+                          imageRendering: 'pixelated',
+                          backgroundColor: '#fff',
+                          borderRadius: BORDER_RADIUS.sm,
+                        }}
+                      />
+                      <button
+                        onClick={() => setAnimationFrames(prev => prev.filter((_, i) => i !== index))}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          right: '4px',
+                          width: '18px',
+                          height: '18px',
+                          backgroundColor: COLORS.ui.danger,
+                          border: 'none',
+                          borderRadius: '50%',
+                          color: '#fff',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        ×
+                      </button>
+                      <div style={{
+                        fontSize: '9px',
+                        color: COLORS.text.muted,
+                        textAlign: 'center',
+                        marginTop: '2px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {frame.label || `Frame ${index + 1}`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{
+                  padding: SPACING.lg,
+                  backgroundColor: COLORS.background.primary,
+                  borderRadius: BORDER_RADIUS.md,
+                  textAlign: 'center',
+                  color: COLORS.text.muted,
+                  border: `2px dashed ${COLORS.ui.border}`,
+                }}>
+                  Click sprites above to add them as frames
+                </div>
+              )}
+            </div>
+            
+            {/* Animation Preview */}
+            <div style={styles.forgeSection}>
+              <h3 style={styles.forgeSectionTitle}>Preview</h3>
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                padding: SPACING.lg,
+                backgroundColor: COLORS.background.primary,
+                borderRadius: BORDER_RADIUS.md,
+              }}>
+                <div style={{
+                  width: '128px',
+                  height: '128px',
+                  backgroundColor: '#fff',
+                  borderRadius: BORDER_RADIUS.md,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: SPACING.md,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                }}>
+                  {animationFrames.length > 0 ? (
+                    <img
+                      src={animationFrames[animationCurrentFrame % animationFrames.length]?.base64}
+                      alt="Animation preview"
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: '100%',
+                        imageRendering: 'pixelated',
+                      }}
+                    />
+                  ) : (
+                    <span style={{ color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.sm }}>
+                      No frames
+                    </span>
+                  )}
+                </div>
+                
+                {/* Playback Controls */}
+                <div style={{ display: 'flex', gap: SPACING.sm, alignItems: 'center' }}>
+                  <button
+                    onClick={() => {
+                      setAnimationPlaying(!animationPlaying);
+                    }}
+                    disabled={animationFrames.length === 0}
+                    style={{
+                      padding: `${SPACING.sm} ${SPACING.lg}`,
+                      backgroundColor: animationPlaying ? COLORS.ui.warning : COLORS.ui.success,
+                      border: 'none',
+                      borderRadius: BORDER_RADIUS.md,
+                      color: '#fff',
+                      cursor: animationFrames.length === 0 ? 'not-allowed' : 'pointer',
+                      opacity: animationFrames.length === 0 ? 0.5 : 1,
+                      fontFamily: TYPOGRAPHY.fontFamily.system,
+                      fontSize: TYPOGRAPHY.fontSize.sm,
+                    }}
+                  >
+                    {animationPlaying ? '⏸ Pause' : '▶ Play'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAnimationPlaying(false);
+                      setAnimationCurrentFrame(0);
+                    }}
+                    style={{
+                      padding: `${SPACING.sm} ${SPACING.md}`,
+                      backgroundColor: COLORS.background.card,
+                      border: `1px solid ${COLORS.ui.border}`,
+                      borderRadius: BORDER_RADIUS.md,
+                      color: COLORS.text.secondary,
+                      cursor: 'pointer',
+                      fontFamily: TYPOGRAPHY.fontFamily.system,
+                      fontSize: TYPOGRAPHY.fontSize.sm,
+                    }}
+                  >
+                    ⏪ Reset
+                  </button>
+                </div>
+                
+                <div style={{ marginTop: SPACING.sm, color: COLORS.text.muted, fontSize: TYPOGRAPHY.fontSize.xs }}>
+                  Frame {animationFrames.length > 0 ? (animationCurrentFrame % animationFrames.length) + 1 : 0} / {animationFrames.length}
+                </div>
+              </div>
+            </div>
+            
+            {/* Export Buttons */}
+            <div style={styles.forgeSection}>
+              <div style={{ display: 'flex', gap: SPACING.sm }}>
+                <button
+                  onClick={() => generateAnimationGIF()}
+                  disabled={animationFrames.length < 2}
+                  style={{
+                    flex: 1,
+                    padding: SPACING.md,
+                    backgroundColor: animationFrames.length < 2 ? COLORS.background.card : COLORS.ui.active,
+                    border: 'none',
+                    borderRadius: BORDER_RADIUS.md,
+                    color: animationFrames.length < 2 ? COLORS.text.muted : '#000',
+                    cursor: animationFrames.length < 2 ? 'not-allowed' : 'pointer',
+                    fontFamily: TYPOGRAPHY.fontFamily.system,
+                    fontSize: TYPOGRAPHY.fontSize.sm,
+                    fontWeight: TYPOGRAPHY.fontWeight.medium,
+                  }}
+                >
+                  Export as GIF
+                </button>
+                <button
+                  onClick={() => generateSpriteSheet()}
+                  disabled={animationFrames.length < 2}
+                  style={{
+                    flex: 1,
+                    padding: SPACING.md,
+                    backgroundColor: animationFrames.length < 2 ? COLORS.background.card : COLORS.ui.success,
+                    border: 'none',
+                    borderRadius: BORDER_RADIUS.md,
+                    color: animationFrames.length < 2 ? COLORS.text.muted : '#fff',
+                    cursor: animationFrames.length < 2 ? 'not-allowed' : 'pointer',
+                    fontFamily: TYPOGRAPHY.fontFamily.system,
+                    fontSize: TYPOGRAPHY.fontSize.sm,
+                    fontWeight: TYPOGRAPHY.fontWeight.medium,
+                  }}
+                >
+                  Export Sprite Sheet
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         
         {processingStage && !processing && (
           <div style={styles.status}>{processingStage}</div>

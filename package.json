@@ -4,6 +4,7 @@
   "description": "Sprite ETL Pipeline for Monster-Battling RPG - Converts sprites into full RPG-ready monster data",
   "private": true,
   "dependencies": {
+    "gif.js": "^0.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1"
