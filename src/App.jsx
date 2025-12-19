@@ -29,7 +29,8 @@ import {
   SaveIcon,
   ImageIcon,
   MonsterIcon,
-  SparkleIcon
+  SparkleIcon,
+  UploadIcon
 } from './components/Icons';
 
 // Main navigation tabs
@@ -67,6 +68,7 @@ export default function App() {
   const [creativity, setCreativity] = useState(50); // 0-100: 0=exact copy, 100=wild reinterpretation
   const [colorPalette, setColorPalette] = useState('original'); // original, custom, or preset name
   const [customColors, setCustomColors] = useState(['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7']); // 5 color palette
+  const [forgeDragOver, setForgeDragOver] = useState(false); // Drag-drop state for Forge
 
   // Services
   const extractor = new SpriteExtractor();
@@ -756,6 +758,40 @@ export default function App() {
     }
   };
 
+  // Handle drag-drop on Forge area
+  const handleForgeDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setForgeDragOver(true);
+  };
+
+  const handleForgeDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setForgeDragOver(false);
+  };
+
+  const handleForgeDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setForgeDragOver(false);
+    
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    
+    const file = files[0];
+    if (!file.type.startsWith('image/')) {
+      setProcessingStage('Please drop an image file');
+      return;
+    }
+    
+    // Process the dropped file
+    await processUpload(file);
+    
+    // Switch to Forge tab and select the new sprite
+    setActiveMainTab('forge');
+  };
+
   // Save generated sprites to library
   const saveGeneratedSprites = () => {
     if (Object.keys(generatedSprites).length === 0) return;
@@ -940,8 +976,18 @@ export default function App() {
           Transform your sprites into different art styles and generate pose variants for game-ready sprite sheets.
         </p>
         
-        {/* Selected Item Preview */}
-        <div style={styles.forgeSection}>
+        {/* Selected Item Preview / Drop Zone */}
+        <div 
+          style={{
+            ...styles.forgeSection,
+            border: forgeDragOver ? `2px dashed ${COLORS.ui.active}` : `1px solid ${COLORS.ui.border}`,
+            backgroundColor: forgeDragOver ? `${COLORS.ui.active}10` : COLORS.background.card,
+            transition: 'all 0.2s ease',
+          }}
+          onDragOver={handleForgeDragOver}
+          onDragLeave={handleForgeDragLeave}
+          onDrop={handleForgeDrop}
+        >
           <h3 style={styles.forgeSectionTitle}>Source Sprite</h3>
           
           {canTransform ? (
@@ -961,11 +1007,31 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div style={{ ...styles.emptyState, padding: SPACING.md }}>
-              <div style={styles.emptyText}>No source selected</div>
-              <div style={styles.emptyHint}>
-                Go to Library and select a sprite to transform
+            <div style={{ 
+              ...styles.emptyState, 
+              padding: SPACING.lg,
+              border: `2px dashed ${forgeDragOver ? COLORS.ui.active : COLORS.ui.border}`,
+              borderRadius: BORDER_RADIUS.md,
+              backgroundColor: forgeDragOver ? `${COLORS.ui.active}10` : 'transparent',
+            }}>
+              <div style={styles.emptyIcon}><UploadIcon size={48} /></div>
+              <div style={styles.emptyText}>
+                {forgeDragOver ? 'Drop image here' : 'Drop an image here'}
               </div>
+              <div style={styles.emptyHint}>
+                Or select a sprite from the Library
+              </div>
+            </div>
+          )}
+          
+          {canTransform && (
+            <div style={{ 
+              marginTop: SPACING.sm, 
+              fontSize: TYPOGRAPHY.fontSize.xs, 
+              color: COLORS.text.muted,
+              textAlign: 'center' 
+            }}>
+              Drop a new image to replace
             </div>
           )}
         </div>
