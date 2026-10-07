@@ -33,13 +33,16 @@ import {
   MonsterIcon,
   SparkleIcon,
   UploadIcon,
-  GroupIcon
+  GroupIcon,
+  MapIcon
 } from './components/Icons';
+import MapEditorPage from './mapEditor/components/MapEditorPage';
 
 // Main navigation tabs
 const MAIN_TABS = [
   { id: 'library', label: 'Library', Icon: LibraryIcon },
-  { id: 'forge', label: 'Forge', Icon: ForgeIcon },
+  { id: 'monsters', label: 'Monsters', Icon: ForgeIcon },
+  { id: 'mapeditor', label: 'Map Editor', Icon: MapIcon },
 ];
 
 // Library sub-tabs
@@ -133,6 +136,7 @@ export default function App() {
   const [originals, setOriginals] = useState([]); // Raw uploaded sprites
   const [transformations, setTransformations] = useState([]); // Generated monsters
   const [selectedItem, setSelectedItem] = useState(null);
+  const [dataLoaded, setDataLoaded] = useState(false); // Flag to prevent saving before loading
   
   // UI state
   const [processing, setProcessing] = useState(false);
@@ -144,6 +148,7 @@ export default function App() {
   const [selectedPoses, setSelectedPoses] = useState(['front', 'back', 'left', 'right']);
   const [customPrompt, setCustomPrompt] = useState('');
   const [generatedSprites, setGeneratedSprites] = useState({}); // { poseId: base64 }
+  const [spriteHistory, setSpriteHistory] = useState({}); // { poseId: [{ base64, timestamp, prompt? }] } - version history per sprite
   const [creativity, setCreativity] = useState(50); // 0-100: 0=exact copy, 100=wild reinterpretation
   const [colorPalette, setColorPalette] = useState('original'); // original, custom, or preset name
   const [customColors, setCustomColors] = useState(['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7']); // 5 color palette
@@ -196,6 +201,14 @@ export default function App() {
   const [animationPlaying, setAnimationPlaying] = useState(false);
   const [animationCurrentFrame, setAnimationCurrentFrame] = useState(0);
   const [generatedAnimations, setGeneratedAnimations] = useState([]); // Saved animations
+  
+  // Generated sprite selection state
+  const [selectedGeneratedSprites, setSelectedGeneratedSprites] = useState(new Set()); // Set of selected sprite keys
+  const [regeneratingSprites, setRegeneratingSprites] = useState(new Set()); // Set of sprite keys currently regenerating
+  const [showHistoryFor, setShowHistoryFor] = useState(null); // Which sprite's history dropdown is open
+  
+  // Library folder collapse state
+  const [collapsedFolders, setCollapsedFolders] = useState(new Set()); // Set of collapsed sessionIds
 
   // Services
   const extractor = new SpriteExtractor();
@@ -205,17 +218,46 @@ export default function App() {
 
   // Load data from localStorage on mount
   useEffect(() => {
+    console.log('[App] Mount effect running - loading data from localStorage');
+    
+    // Debug helper - expose to window for testing
+    window.debugStorage = () => {
+      const originals = localStorage.getItem('monster-forge-originals');
+      const transformations = localStorage.getItem('monster-forge-transformations');
+      console.log('=== localStorage Debug ===');
+      console.log('Originals key exists:', !!originals);
+      console.log('Originals size:', originals ? Math.round(originals.length / 1024) + ' KB' : 'N/A');
+      console.log('Transformations key exists:', !!transformations);
+      console.log('Transformations size:', transformations ? Math.round(transformations.length / 1024) + ' KB' : 'N/A');
+      if (transformations) {
+        const parsed = JSON.parse(transformations);
+        console.log('Transformations count:', parsed.length);
+        console.log('First transformation:', parsed[0]);
+      }
+      return { originals: !!originals, transformations: !!transformations };
+    };
+    
     const storedOriginals = settingsStore.loadOriginals();
     const storedTransformations = settingsStore.loadTransformations();
     
+    console.log('[App] Loaded originals count:', storedOriginals.length);
+    console.log('[App] Loaded transformations count:', storedTransformations.length);
+    
     if (storedOriginals.length > 0) {
-      console.log('[App] Loaded', storedOriginals.length, 'originals from localStorage');
+      console.log('[App] Setting originals state with', storedOriginals.length, 'items');
       setOriginals(storedOriginals);
     }
     if (storedTransformations.length > 0) {
-      console.log('[App] Loaded', storedTransformations.length, 'transformations from localStorage');
+      console.log('[App] Setting transformations state with', storedTransformations.length, 'items');
+      console.log('[App] First transformation:', storedTransformations[0]?.name, storedTransformations[0]?.id);
       setTransformations(storedTransformations);
+    } else {
+      console.log('[App] No transformations found in localStorage');
     }
+    
+    // Mark data as loaded so we can start saving changes
+    setDataLoaded(true);
+    console.log('[App] Data loading complete, saving enabled');
   }, []);
 
   // Save originals to localStorage when changed (exclude extracted sprites to avoid quota issues)
@@ -231,10 +273,32 @@ export default function App() {
 
   // Save transformations to localStorage when changed
   useEffect(() => {
-    if (transformations.length > 0) {
-      settingsStore.saveTransformations(transformations);
+    // Don't save until we've loaded data from localStorage first
+    if (!dataLoaded) {
+      console.log('[App] Skipping save - data not loaded yet');
+      return;
     }
-  }, [transformations]);
+    
+    // Always save, even if empty (to persist deletions)
+    try {
+      settingsStore.saveTransformations(transformations);
+      console.log('[App] Saved', transformations.length, 'transformations to localStorage');
+    } catch (error) {
+      console.error('[App] Failed to save transformations:', error);
+      // If quota exceeded, try saving without the oldest items
+      if (error.name === 'QuotaExceededError' || error.message?.includes('quota')) {
+        console.warn('[App] localStorage quota exceeded, trying to save fewer items');
+        // Keep only the most recent 50 transformations
+        const recentTransformations = transformations.slice(-50);
+        try {
+          settingsStore.saveTransformations(recentTransformations);
+          console.log('[App] Saved', recentTransformations.length, 'recent transformations');
+        } catch (innerError) {
+          console.error('[App] Still failed to save transformations:', innerError);
+        }
+      }
+    }
+  }, [transformations, dataLoaded]);
 
   // Load extracted sprites when selecting a sprite sheet that has them
   useEffect(() => {
@@ -259,6 +323,22 @@ export default function App() {
       setSelectedExtractedSprites([]);
     }
   }, [selectedItem?.id, selectedItem?.isSpriteSheet, selectedItem?.hasExtractedSprites, originals]);
+
+  // Auto-select all generated sprites when they change
+  useEffect(() => {
+    const spriteKeys = Object.keys(generatedSprites);
+    if (spriteKeys.length > 0) {
+      // Select all sprites that have valid images
+      const validKeys = spriteKeys.filter(key => {
+        const result = generatedSprites[key];
+        if (typeof result === 'object' && result?.sprite) return result.sprite !== null;
+        return result !== null;
+      });
+      setSelectedGeneratedSprites(new Set(validKeys));
+    } else {
+      setSelectedGeneratedSprites(new Set());
+    }
+  }, [Object.keys(generatedSprites).length]); // Only run when count changes, not on every regeneration
 
   // Animation playback effect
   useEffect(() => {
@@ -439,7 +519,7 @@ export default function App() {
   const openInForge = useCallback((item, e) => {
     if (e) e.stopPropagation();
     setSelectedItem(item);
-    setActiveMainTab('forge');
+    setActiveMainTab('monsters');
     
     // If it's a sprite sheet with previously extracted sprites, load them
     if (item?.isSpriteSheet && item?.hasExtractedSprites) {
@@ -1237,7 +1317,7 @@ export default function App() {
               })()}
             </div>
           ) : (
-            // Transformations: grouped by session
+            // Transformations: grouped by session with folder cards
             <div style={{ display: 'flex', flexDirection: 'column', gap: SPACING.md }}>
               {(() => {
                 // Group by sessionId
@@ -1250,7 +1330,8 @@ export default function App() {
                       groups[item.sessionId] = {
                         sessionId: item.sessionId,
                         sessionName: item.sessionName || 'Generated Set',
-                        items: []
+                        items: [],
+                        createdAt: item.createdAt
                       };
                     }
                     groups[item.sessionId].items.push(item);
@@ -1259,72 +1340,260 @@ export default function App() {
                   }
                 });
                 
-                const groupList = Object.values(groups);
+                const groupList = Object.values(groups).sort((a, b) => 
+                  new Date(b.createdAt) - new Date(a.createdAt)
+                );
+
+                // Toggle folder collapse
+                const toggleFolder = (sessionId) => {
+                  setCollapsedFolders(prev => {
+                    const next = new Set([...prev]);
+                    if (next.has(sessionId)) {
+                      next.delete(sessionId);
+                    } else {
+                      next.add(sessionId);
+                    }
+                    return next;
+                  });
+                };
                 
                 return (
                   <>
-                    {/* Grouped items */}
-                    {groupList.map(group => (
-                      <div key={group.sessionId} style={{
-                        backgroundColor: COLORS.background.card,
-                        borderRadius: BORDER_RADIUS.md,
-                        border: `1px solid ${COLORS.ui.border}`,
-                        overflow: 'hidden'
+                    {/* Folder Cards Row */}
+                    {groupList.length > 0 && (
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: 'row',
+                        gap: SPACING.sm,
+                        overflowX: 'auto',
+                        paddingBottom: SPACING.xs,
                       }}>
-                        <div style={{
-                          padding: `${SPACING.xs} ${SPACING.sm}`,
-                          backgroundColor: COLORS.background.tertiary,
-                          fontSize: TYPOGRAPHY.fontSize.xs,
-                          color: COLORS.text.secondary,
-                          fontWeight: TYPOGRAPHY.fontWeight.medium,
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center'
-                        }}>
-                          <span>{group.sessionName}</span>
-                          <span style={{ color: COLORS.text.muted }}>({group.items.length})</span>
-                        </div>
-                        <div style={{ ...styles.itemGrid, padding: SPACING.sm, gap: SPACING.xs }}>
-                          {group.items.map(item => (
+                        {groupList.map(group => {
+                          const isCollapsed = collapsedFolders.has(group.sessionId);
+                          const previewSprites = group.items.slice(0, 4);
+                          const mainSprite = previewSprites[0];
+                          
+                          return (
                             <div
-                              key={item.id}
+                              key={group.sessionId}
+                              onClick={() => toggleFolder(group.sessionId)}
                               style={{
-                                ...styles.itemCard(selectedItem?.id === item.id),
-                                padding: SPACING.xs
+                                position: 'relative',
+                                padding: '4px',
+                                width: '140px',
+                                minWidth: '140px',
+                                backgroundColor: COLORS.background.card,
+                                borderRadius: BORDER_RADIUS.lg,
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                cursor: 'pointer',
+                                border: !isCollapsed ? `2px solid ${COLORS.ui.active}` : '2px solid transparent',
+                                transition: 'border-color 0.2s, transform 0.2s',
                               }}
-                              onClick={() => setSelectedItem(item)}
-                              onMouseEnter={() => setHoveredItemId(item.id)}
-                              onMouseLeave={() => setHoveredItemId(null)}
                             >
-                              <button
-                                style={styles.itemDeleteButton}
-                                onClick={(e) => deleteTransformation(item.id, e)}
-                                title="Delete"
-                              >
-                                <DeleteIcon size={10} color="#fff" />
-                              </button>
-                              <button
-                                style={{
-                                  ...styles.itemForgeButton,
-                                  opacity: hoveredItemId === item.id ? 1 : 0,
-                                  width: '24px',
-                                  height: '24px',
-                                }}
-                                onClick={(e) => openInForge(item, e)}
-                                title="Open in Forge"
-                              >
-                                <ForgeIcon size={14} color="#000" />
-                              </button>
-                              <img
-                                src={item.base64 || item.baseSprite}
-                                alt={item.name}
-                                style={{ ...styles.itemSprite, marginBottom: 0 }}
-                              />
+                              {/* Folder Preview Image */}
+                              <div style={{
+                                padding: SPACING.sm,
+                                height: '100px',
+                                backgroundColor: COLORS.background.tertiary,
+                                borderRadius: BORDER_RADIUS.md,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                position: 'relative',
+                                overflow: 'hidden',
+                              }}>
+                                {/* Main sprite large */}
+                                {mainSprite && (
+                                  <img
+                                    src={mainSprite.base64 || mainSprite.baseSprite}
+                                    alt={mainSprite.name}
+                                    style={{
+                                      width: '100%',
+                                      height: '100%',
+                                      objectFit: 'contain',
+                                      imageRendering: 'pixelated',
+                                    }}
+                                  />
+                                )}
+                                {/* Small preview thumbnails in corner */}
+                                {previewSprites.length > 1 && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    bottom: '4px',
+                                    right: '4px',
+                                    display: 'flex',
+                                    gap: '2px',
+                                  }}>
+                                    {previewSprites.slice(1, 4).map((sprite, idx) => (
+                                      <div
+                                        key={sprite.id}
+                                        style={{
+                                          width: '20px',
+                                          height: '20px',
+                                          backgroundColor: COLORS.background.card,
+                                          borderRadius: '2px',
+                                          overflow: 'hidden',
+                                          border: `1px solid ${COLORS.ui.border}`,
+                                        }}
+                                      >
+                                        <img
+                                          src={sprite.base64 || sprite.baseSprite}
+                                          alt=""
+                                          style={{
+                                            width: '100%',
+                                            height: '100%',
+                                            objectFit: 'contain',
+                                            imageRendering: 'pixelated',
+                                          }}
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Folder Info */}
+                              <div style={{ padding: `${SPACING.xs} ${SPACING.sm}` }}>
+                                <p style={{
+                                  margin: 0,
+                                  fontSize: TYPOGRAPHY.fontSize.xs,
+                                  fontWeight: TYPOGRAPHY.fontWeight.medium,
+                                  color: COLORS.text.primary,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}>
+                                  {group.sessionName.split(' - ')[0]}
+                                </p>
+                                <div style={{
+                                  fontSize: '10px',
+                                  color: COLORS.text.muted,
+                                  display: 'flex',
+                                  gap: SPACING.xs,
+                                }}>
+                                  <span>Folder</span>
+                                  <span style={{ color: COLORS.text.muted }}>-</span>
+                                  <span>{group.items.length} sprites</span>
+                                </div>
+                              </div>
+
+                              {/* Expand/Collapse indicator */}
+                              <div style={{
+                                position: 'absolute',
+                                top: '8px',
+                                right: '8px',
+                                width: '20px',
+                                height: '20px',
+                                backgroundColor: isCollapsed ? COLORS.background.tertiary : COLORS.ui.active,
+                                borderRadius: '50%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                                <svg 
+                                  width="10" 
+                                  height="10" 
+                                  viewBox="0 0 24 24" 
+                                  fill="none" 
+                                  stroke={isCollapsed ? COLORS.text.secondary : '#000'}
+                                  strokeWidth="3"
+                                  style={{
+                                    transform: isCollapsed ? 'rotate(0deg)' : 'rotate(180deg)',
+                                    transition: 'transform 0.2s',
+                                  }}
+                                >
+                                  <polyline points="6 9 12 15 18 9" />
+                                </svg>
+                              </div>
                             </div>
-                          ))}
-                        </div>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
+
+                    {/* Expanded folder contents */}
+                    {groupList.map(group => {
+                      const isCollapsed = collapsedFolders.has(group.sessionId);
+                      if (isCollapsed) return null;
+                      
+                      return (
+                        <div key={group.sessionId} style={{
+                          backgroundColor: COLORS.background.card,
+                          borderRadius: BORDER_RADIUS.md,
+                          border: `1px solid ${COLORS.ui.border}`,
+                          overflow: 'hidden'
+                        }}>
+                          <div 
+                            style={{
+                              padding: `${SPACING.xs} ${SPACING.sm}`,
+                              backgroundColor: COLORS.background.tertiary,
+                              fontSize: TYPOGRAPHY.fontSize.xs,
+                              color: COLORS.text.secondary,
+                              fontWeight: TYPOGRAPHY.fontWeight.medium,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => toggleFolder(group.sessionId)}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: SPACING.xs }}>
+                              <svg 
+                                width="12" 
+                                height="12" 
+                                viewBox="0 0 24 24" 
+                                fill="none" 
+                                stroke={COLORS.text.secondary}
+                                strokeWidth="2"
+                              >
+                                <polyline points="6 9 12 15 18 9" />
+                              </svg>
+                              <span>{group.sessionName}</span>
+                            </div>
+                            <span style={{ color: COLORS.text.muted }}>({group.items.length})</span>
+                          </div>
+                          <div style={{ ...styles.itemGrid, padding: SPACING.sm, gap: SPACING.xs }}>
+                            {group.items.map(item => (
+                              <div
+                                key={item.id}
+                                style={{
+                                  ...styles.itemCard(selectedItem?.id === item.id),
+                                  padding: SPACING.xs
+                                }}
+                                onClick={() => setSelectedItem(item)}
+                                onMouseEnter={() => setHoveredItemId(item.id)}
+                                onMouseLeave={() => setHoveredItemId(null)}
+                              >
+                                <button
+                                  style={styles.itemDeleteButton}
+                                  onClick={(e) => deleteTransformation(item.id, e)}
+                                  title="Delete"
+                                >
+                                  <DeleteIcon size={10} color="#fff" />
+                                </button>
+                                <button
+                                  style={{
+                                    ...styles.itemForgeButton,
+                                    opacity: hoveredItemId === item.id ? 1 : 0,
+                                    width: '24px',
+                                    height: '24px',
+                                  }}
+                                  onClick={(e) => openInForge(item, e)}
+                                  title="Open in Forge"
+                                >
+                                  <ForgeIcon size={14} color="#000" />
+                                </button>
+                                <img
+                                  src={item.base64 || item.baseSprite}
+                                  alt={item.name}
+                                  style={{ ...styles.itemSprite, marginBottom: 0 }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                     
                     {/* Ungrouped items */}
                     {ungrouped.length > 0 && (
@@ -1471,11 +1740,11 @@ export default function App() {
   };
 
   // Regenerate a single pose
-  const regenerateSingle = async (poseId) => {
+  const regenerateSingle = async (poseId, styleReference = null) => {
     if (!selectedItem) return;
     
-    setProcessing(true);
-    setProcessingStage(`Regenerating ${poseId}...`);
+    // Track this specific sprite as regenerating (don't block global processing)
+    setRegeneratingSprites(prev => new Set([...prev, poseId]));
     
     const sourceImage = selectedItem.base64 || selectedItem.baseSprite;
     
@@ -1484,23 +1753,71 @@ export default function App() {
         customPrompt,
         creativity,
         colorPalette,
-        customColors: colorPalette === 'custom' ? customColors : []
+        customColors: colorPalette === 'custom' ? customColors : [],
+        styleReference, // Optional reference image(s) for style matching
       };
       
       const newSprite = await nanoBanana.generateWithStyle(sourceImage, selectedStyle, poseId, genOptions);
       
       if (newSprite) {
-        setGeneratedSprites(prev => ({ ...prev, [poseId]: newSprite }));
-        setProcessingStage(`Regenerated ${poseId}!`);
-      } else {
-        setProcessingStage(`Failed to regenerate ${poseId}`);
+        // Save current version to history before updating
+        setGeneratedSprites(prev => {
+          const currentSprite = prev[poseId];
+          if (currentSprite) {
+            // Add current sprite to history
+            setSpriteHistory(history => ({
+              ...history,
+              [poseId]: [
+                ...(history[poseId] || []),
+                {
+                  base64: typeof currentSprite === 'object' ? currentSprite.sprite : currentSprite,
+                  timestamp: Date.now(),
+                  prompt: customPrompt,
+                }
+              ]
+            }));
+          }
+          return { ...prev, [poseId]: newSprite };
+        });
+        // Keep the sprite selected after regeneration
+        setSelectedGeneratedSprites(prev => new Set([...prev, poseId]));
       }
     } catch (error) {
       console.error(`[App] Regenerate ${poseId} failed:`, error);
-      setProcessingStage(`Error: ${error.message}`);
     } finally {
-      setProcessing(false);
+      setRegeneratingSprites(prev => {
+        const next = new Set([...prev]);
+        next.delete(poseId);
+        return next;
+      });
     }
+  };
+
+  // Restore a previous version from history
+  const restoreFromHistory = (poseId, historyIndex) => {
+    const history = spriteHistory[poseId];
+    if (!history || !history[historyIndex]) return;
+    
+    const versionToRestore = history[historyIndex];
+    
+    // Save current version to history before restoring
+    setGeneratedSprites(prev => {
+      const currentSprite = prev[poseId];
+      if (currentSprite) {
+        setSpriteHistory(h => ({
+          ...h,
+          [poseId]: [
+            ...(h[poseId] || []),
+            {
+              base64: typeof currentSprite === 'object' ? currentSprite.sprite : currentSprite,
+              timestamp: Date.now(),
+              prompt: customPrompt,
+            }
+          ]
+        }));
+      }
+      return { ...prev, [poseId]: versionToRestore.base64 };
+    });
   };
 
   // Handle drag-drop on Forge area
@@ -1537,12 +1854,19 @@ export default function App() {
   // Save generated sprites to library
   const saveGeneratedSprites = () => {
     if (Object.keys(generatedSprites).length === 0) return;
+    if (selectedGeneratedSprites.size === 0) {
+      setToast({ message: 'No sprites selected. Select sprites to save.', type: 'warning' });
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
     
     const sessionId = `session_${Date.now()}`;
     const sessionName = `${selectedItem?.name || selectedItem?.filename || 'Sprite'} - ${ART_STYLES[selectedStyle].name}`;
     
     const newTransformations = Object.entries(generatedSprites)
-      .filter(([_, result]) => {
+      .filter(([key, result]) => {
+        // Only include selected sprites
+        if (!selectedGeneratedSprites.has(key)) return false;
         // Handle both single sprite format (string) and batch format (object with sprite)
         if (typeof result === 'object' && result?.sprite) return result.sprite !== null;
         return result !== null;
@@ -1557,8 +1881,7 @@ export default function App() {
         return {
           id: `gen_${Date.now()}_${key}`,
           name: `${spriteName} (${ART_STYLES[selectedStyle].name} - ${poseId})`,
-          baseSprite: spriteImage,
-          base64: spriteImage,
+          base64: spriteImage, // Only store base64 once, not duplicated
           originalId: selectedItem?.id,
           style: selectedStyle,
           pose: poseId,
@@ -1566,7 +1889,6 @@ export default function App() {
           primaryElement: selectedItem?.primaryElement || 'Unknown',
           sessionId,
           sessionName,
-          genOptions: { creativity, colorPalette, customColors, customPrompt },
           // For batch results, also store source sprite info
           ...(isBatchResult && {
             sourceSpriteName: result.spriteName,
@@ -1576,7 +1898,29 @@ export default function App() {
       });
     
     if (newTransformations.length > 0) {
-      setTransformations(prev => [...prev, ...newTransformations]);
+      console.log('[App] Saving', newTransformations.length, 'new transformations');
+      console.log('[App] Sample transformation:', { 
+        id: newTransformations[0].id, 
+        name: newTransformations[0].name,
+        hasBase64: !!newTransformations[0].base64,
+        base64Length: newTransformations[0].base64?.length
+      });
+      
+      setTransformations(prev => {
+        const updated = [...prev, ...newTransformations];
+        console.log('[App] Total transformations after save:', updated.length);
+        
+        // IMMEDIATELY save to localStorage here to ensure persistence
+        // The useEffect may not run in time during hot reloads
+        try {
+          settingsStore.saveTransformations(updated);
+          console.log('[App] Immediately saved', updated.length, 'transformations to localStorage');
+        } catch (err) {
+          console.error('[App] Immediate save failed:', err);
+        }
+        
+        return updated;
+      });
       
       // Show prominent toast with link to Library
       setToast({
@@ -1584,6 +1928,7 @@ export default function App() {
         type: 'success',
         action: () => {
           setActiveMainTab('library');
+          setActiveLibraryTab('transformations');
           setToast(null);
         },
         actionLabel: 'View in Library'
@@ -3118,8 +3463,105 @@ export default function App() {
         {Object.keys(generatedSprites).length > 0 && (
           <div style={styles.forgeSection}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md }}>
-              <h3 style={{ ...styles.forgeSectionTitle, marginBottom: 0 }}>Generated Sprites</h3>
+              <h3 style={{ ...styles.forgeSectionTitle, marginBottom: 0 }}>
+                Generated Sprites
+                <span style={{ 
+                  marginLeft: SPACING.sm, 
+                  fontSize: TYPOGRAPHY.fontSize.xs, 
+                  color: COLORS.text.muted,
+                  fontWeight: TYPOGRAPHY.fontWeight.normal
+                }}>
+                  ({selectedGeneratedSprites.size} of {Object.keys(generatedSprites).filter(k => generatedSprites[k]).length} selected)
+                </span>
+              </h3>
               <div style={{ display: 'flex', gap: SPACING.sm }}>
+                {/* Select All / Unselect All buttons */}
+                <button
+                  style={{
+                    padding: `${SPACING.xs} ${SPACING.sm}`,
+                    backgroundColor: 'transparent',
+                    border: `1px solid ${COLORS.ui.border}`,
+                    borderRadius: BORDER_RADIUS.sm,
+                    color: COLORS.text.secondary,
+                    fontSize: TYPOGRAPHY.fontSize.xs,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: SPACING.xs,
+                  }}
+                  onClick={() => {
+                    const validKeys = Object.keys(generatedSprites).filter(k => {
+                      const r = generatedSprites[k];
+                      if (typeof r === 'object' && r?.sprite) return r.sprite !== null;
+                      return r !== null;
+                    });
+                    setSelectedGeneratedSprites(new Set(validKeys));
+                  }}
+                >
+                  Select All
+                </button>
+                <button
+                  style={{
+                    padding: `${SPACING.xs} ${SPACING.sm}`,
+                    backgroundColor: 'transparent',
+                    border: `1px solid ${COLORS.ui.border}`,
+                    borderRadius: BORDER_RADIUS.sm,
+                    color: COLORS.text.secondary,
+                    fontSize: TYPOGRAPHY.fontSize.xs,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: SPACING.xs,
+                  }}
+                  onClick={() => setSelectedGeneratedSprites(new Set())}
+                >
+                  Unselect All
+                </button>
+                {/* Match Style button - regenerate unselected to match selected style */}
+                {selectedGeneratedSprites.size > 0 && selectedGeneratedSprites.size < Object.keys(generatedSprites).filter(k => generatedSprites[k]).length && (
+                  <button
+                    style={{
+                      padding: `${SPACING.xs} ${SPACING.sm}`,
+                      backgroundColor: COLORS.ui.info,
+                      border: 'none',
+                      borderRadius: BORDER_RADIUS.sm,
+                      color: '#fff',
+                      fontSize: TYPOGRAPHY.fontSize.xs,
+                      cursor: processing ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: SPACING.xs,
+                    }}
+                    onClick={async () => {
+                      // Get selected sprites as style references
+                      const selectedImages = [...selectedGeneratedSprites]
+                        .map(k => generatedSprites[k])
+                        .filter(Boolean)
+                        .map(r => typeof r === 'object' ? r.sprite : r);
+                      
+                      // Get unselected sprite keys to regenerate
+                      const unselectedKeys = Object.keys(generatedSprites)
+                        .filter(k => generatedSprites[k] && !selectedGeneratedSprites.has(k));
+                      
+                      if (unselectedKeys.length === 0 || selectedImages.length === 0) return;
+                      
+                      // Regenerate each unselected sprite with style reference
+                      for (const poseId of unselectedKeys) {
+                        await regenerateSingle(poseId, selectedImages);
+                      }
+                      
+                      setToast({
+                        message: `Regenerated ${unselectedKeys.length} sprite(s) to match selected style`,
+                        type: 'success'
+                      });
+                      setTimeout(() => setToast(null), 3000);
+                    }}
+                    disabled={processing}
+                    title="Regenerate unselected sprites to match the style of selected sprites"
+                  >
+                    <SparkleIcon size={12} /> Match Style
+                  </button>
+                )}
                 <button
                   style={{
                     ...styles.forgeButton,
@@ -3136,12 +3578,13 @@ export default function App() {
                     ...styles.forgeButton,
                     padding: `${SPACING.xs} ${SPACING.md}`,
                     fontSize: TYPOGRAPHY.fontSize.xs,
-                    backgroundColor: COLORS.ui.success,
+                    backgroundColor: selectedGeneratedSprites.size > 0 ? COLORS.ui.success : COLORS.text.muted,
+                    cursor: selectedGeneratedSprites.size > 0 ? 'pointer' : 'not-allowed',
                   }}
                   onClick={saveGeneratedSprites}
-                  disabled={processing}
+                  disabled={processing || selectedGeneratedSprites.size === 0}
                 >
-                  <SaveIcon size={14} /> Save to Library
+                  <SaveIcon size={14} /> Save Selected ({selectedGeneratedSprites.size})
                 </button>
               </div>
             </div>
@@ -3153,6 +3596,10 @@ export default function App() {
                 const label = isBatchResult 
                   ? `${result.spriteName} - ${POSE_OPTIONS[result.poseId]?.name || result.poseId}`
                   : (POSE_OPTIONS[key]?.name || key);
+                const isSelected = selectedGeneratedSprites.has(key);
+                const isRegenerating = regeneratingSprites.has(key);
+                const history = spriteHistory[key] || [];
+                const hasHistory = history.length > 0;
                 
                 // Prepare carousel data for this sprite
                 const openGeneratedCarousel = () => {
@@ -3175,9 +3622,188 @@ export default function App() {
                   setCarouselIndex(index);
                   setCarouselOpen(true);
                 };
+
+                // Toggle selection for this sprite
+                const toggleSelection = (e) => {
+                  e.stopPropagation();
+                  setSelectedGeneratedSprites(prev => {
+                    const next = new Set([...prev]);
+                    if (next.has(key)) {
+                      next.delete(key);
+                    } else {
+                      next.add(key);
+                    }
+                    return next;
+                  });
+                };
                 
                 return (
-                  <div key={key} style={{ ...forgeStyles.resultCard, position: 'relative', cursor: spriteImage ? 'pointer' : 'default' }}>
+                  <div 
+                    key={key} 
+                    style={{ 
+                      ...forgeStyles.resultCard, 
+                      position: 'relative', 
+                      cursor: spriteImage ? 'pointer' : 'default',
+                      border: isSelected ? `2px solid ${COLORS.ui.active}` : `2px solid transparent`,
+                      opacity: isRegenerating ? 0.6 : 1,
+                    }}
+                  >
+                    {/* Selection checkbox */}
+                    {spriteImage && (
+                      <div
+                        onClick={toggleSelection}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          left: '4px',
+                          width: '20px',
+                          height: '20px',
+                          borderRadius: BORDER_RADIUS.sm,
+                          backgroundColor: isSelected ? COLORS.ui.active : COLORS.background.tertiary,
+                          border: `2px solid ${isSelected ? COLORS.ui.active : COLORS.ui.border}`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          zIndex: 10,
+                        }}
+                        title={isSelected ? 'Unselect' : 'Select'}
+                      >
+                        {isSelected && (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="3">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        )}
+                      </div>
+                    )}
+
+                    {/* History badge - shows version count */}
+                    {hasHistory && spriteImage && (
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Toggle showing history for this sprite
+                          setShowHistoryFor(prev => prev === key ? null : key);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          right: '4px',
+                          minWidth: '20px',
+                          height: '20px',
+                          padding: '0 4px',
+                          borderRadius: BORDER_RADIUS.sm,
+                          backgroundColor: COLORS.ui.info,
+                          color: '#fff',
+                          fontSize: '10px',
+                          fontWeight: 'bold',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          zIndex: 10,
+                        }}
+                        title={`${history.length} previous version(s) - click to view`}
+                      >
+                        {history.length}
+                      </div>
+                    )}
+
+                    {/* History dropdown */}
+                    {showHistoryFor === key && hasHistory && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '28px',
+                          right: '4px',
+                          backgroundColor: COLORS.background.card,
+                          border: `1px solid ${COLORS.ui.border}`,
+                          borderRadius: BORDER_RADIUS.md,
+                          padding: SPACING.xs,
+                          zIndex: 30,
+                          minWidth: '120px',
+                          maxHeight: '200px',
+                          overflowY: 'auto',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div style={{ 
+                          fontSize: TYPOGRAPHY.fontSize.xs, 
+                          color: COLORS.text.secondary, 
+                          marginBottom: SPACING.xs,
+                          fontWeight: 'bold'
+                        }}>
+                          Previous Versions
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {history.slice().reverse().map((version, idx) => {
+                            const actualIndex = history.length - 1 - idx;
+                            return (
+                              <div
+                                key={version.timestamp}
+                                onClick={() => {
+                                  restoreFromHistory(key, actualIndex);
+                                  setShowHistoryFor(null);
+                                }}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: SPACING.xs,
+                                  padding: '4px',
+                                  borderRadius: BORDER_RADIUS.sm,
+                                  cursor: 'pointer',
+                                  backgroundColor: COLORS.background.tertiary,
+                                }}
+                              >
+                                <img
+                                  src={version.base64}
+                                  alt={`Version ${actualIndex + 1}`}
+                                  style={{
+                                    width: '32px',
+                                    height: '32px',
+                                    objectFit: 'contain',
+                                    imageRendering: 'pixelated',
+                                    borderRadius: '2px',
+                                    backgroundColor: COLORS.background.secondary,
+                                  }}
+                                />
+                                <div style={{ fontSize: '10px', color: COLORS.text.muted }}>
+                                  v{actualIndex + 1}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Loading overlay when regenerating */}
+                    {isRegenerating && (
+                      <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0,0,0,0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderRadius: BORDER_RADIUS.md,
+                        zIndex: 20,
+                      }}>
+                        <div style={{
+                          width: '24px',
+                          height: '24px',
+                          border: `3px solid ${COLORS.ui.border}`,
+                          borderTopColor: COLORS.ui.active,
+                          borderRadius: '50%',
+                          animation: 'spin 1s linear infinite',
+                        }} />
+                      </div>
+                    )}
+
                     {spriteImage ? (
                       <>
                         <img
@@ -3203,17 +3829,18 @@ export default function App() {
                               borderRadius: BORDER_RADIUS.sm,
                               color: COLORS.text.secondary,
                               fontSize: TYPOGRAPHY.fontSize.xs,
-                              cursor: processing ? 'not-allowed' : 'pointer',
+                              cursor: (processing || isRegenerating) ? 'not-allowed' : 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               gap: SPACING.xs,
                               width: '100%',
                               justifyContent: 'center',
+                              opacity: isRegenerating ? 0.5 : 1,
                             }}
-                            onClick={() => regenerateSingle(key)}
-                            disabled={processing}
+                            onClick={(e) => { e.stopPropagation(); regenerateSingle(key); }}
+                            disabled={processing || isRegenerating}
                           >
-                            <RefreshIcon size={12} /> Redo
+                            <RefreshIcon size={12} /> {isRegenerating ? 'Regenerating...' : 'Redo'}
                           </button>
                         )}
                       </>
@@ -3230,12 +3857,12 @@ export default function App() {
                               borderRadius: BORDER_RADIUS.sm,
                               color: '#000',
                               fontSize: TYPOGRAPHY.fontSize.xs,
-                              cursor: processing ? 'not-allowed' : 'pointer',
+                              cursor: (processing || isRegenerating) ? 'not-allowed' : 'pointer',
                             }}
-                            onClick={() => regenerateSingle(key)}
-                            disabled={processing}
+                            onClick={(e) => { e.stopPropagation(); regenerateSingle(key); }}
+                            disabled={processing || isRegenerating}
                           >
-                            Retry
+                            {isRegenerating ? 'Retrying...' : 'Retry'}
                           </button>
                         )}
                       </div>
@@ -3811,7 +4438,10 @@ export default function App() {
       {/* Main Content */}
       <main style={styles.main}>
         {activeMainTab === 'library' && renderLibrary()}
-        {activeMainTab === 'forge' && renderForge()}
+        {activeMainTab === 'monsters' && renderForge()}
+        {activeMainTab === 'mapeditor' && (
+          <MapEditorPage monsters={transformations} />
+        )}
       </main>
       
       {/* Settings Modal */}

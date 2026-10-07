@@ -242,3 +242,39 @@ export const CollapseIcon = ({ size = 20, color = 'currentColor', ...props }) =>
     <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/>
   </svg>
 );
+
+export const MapIcon = ({ size = 20, color = 'currentColor', ...props }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    style={{ ...iconStyle, color }}
+    {...props}
+  >
+    <path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/>
+  </svg>
+);
+
+export const PlayIcon = ({ size = 20, color = 'currentColor', ...props }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    style={{ ...iconStyle, color }}
+    {...props}
+  >
+    <path d="M8 5v14l11-7z"/>
+  </svg>
+);
+
+export const PencilIcon = ({ size = 20, color = 'currentColor', ...props }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    style={{ ...iconStyle, color }}
+    {...props}
+  >
+    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+  </svg>
+);

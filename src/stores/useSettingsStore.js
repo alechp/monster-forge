@@ -136,20 +136,23 @@ export const settingsStore = {
   },
   
   // Local storage for sprites
+  // Note: Always use localStorage for now - Y14D integration can be added later
   saveOriginals(originals) {
-    if (currentSettings.storageMode !== 'local') return;
     try {
-      localStorage.setItem(ORIGINALS_STORAGE_KEY, JSON.stringify(originals));
+      const data = JSON.stringify(originals);
+      console.log('[SettingsStore] Saving originals, size:', Math.round(data.length / 1024), 'KB');
+      localStorage.setItem(ORIGINALS_STORAGE_KEY, data);
     } catch (error) {
       console.error('[SettingsStore] Failed to save originals:', error);
     }
   },
   
   loadOriginals() {
-    if (currentSettings.storageMode !== 'local') return [];
     try {
       const stored = localStorage.getItem(ORIGINALS_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
+      const parsed = stored ? JSON.parse(stored) : [];
+      console.log('[SettingsStore] Loaded', parsed.length, 'originals from localStorage');
+      return parsed;
     } catch (error) {
       console.error('[SettingsStore] Failed to load originals:', error);
       return [];
@@ -157,19 +160,49 @@ export const settingsStore = {
   },
   
   saveTransformations(transformations) {
-    if (currentSettings.storageMode !== 'local') return;
+    console.log('[SettingsStore] saveTransformations called with', transformations.length, 'items');
+    
     try {
-      localStorage.setItem(TRANSFORMATIONS_STORAGE_KEY, JSON.stringify(transformations));
+      const data = JSON.stringify(transformations);
+      const sizeKB = Math.round(data.length / 1024);
+      console.log('[SettingsStore] Saving transformations, size:', sizeKB, 'KB');
+      
+      // Check if we might exceed quota (localStorage typically has 5-10MB limit)
+      if (sizeKB > 4000) {
+        console.warn('[SettingsStore] Data size is large, may hit quota limits');
+      }
+      
+      localStorage.setItem(TRANSFORMATIONS_STORAGE_KEY, data);
+      
+      // Verify the save worked
+      const verifyData = localStorage.getItem(TRANSFORMATIONS_STORAGE_KEY);
+      const verified = verifyData ? JSON.parse(verifyData) : [];
+      console.log('[SettingsStore] Verified save - stored', verified.length, 'transformations');
+      
+      if (verified.length !== transformations.length) {
+        console.error('[SettingsStore] MISMATCH! Tried to save', transformations.length, 'but only', verified.length, 'were stored');
+      }
     } catch (error) {
       console.error('[SettingsStore] Failed to save transformations:', error);
+      console.error('[SettingsStore] Error name:', error.name);
+      console.error('[SettingsStore] Error message:', error.message);
+      // Re-throw to let caller handle quota issues
+      throw error;
     }
   },
   
   loadTransformations() {
-    if (currentSettings.storageMode !== 'local') return [];
+    console.log('[SettingsStore] loadTransformations called');
+    
     try {
       const stored = localStorage.getItem(TRANSFORMATIONS_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
+      console.log('[SettingsStore] Raw localStorage data exists:', !!stored);
+      if (stored) {
+        console.log('[SettingsStore] Raw data size:', Math.round(stored.length / 1024), 'KB');
+      }
+      const parsed = stored ? JSON.parse(stored) : [];
+      console.log('[SettingsStore] Loaded', parsed.length, 'transformations from localStorage');
+      return parsed;
     } catch (error) {
       console.error('[SettingsStore] Failed to load transformations:', error);
       return [];

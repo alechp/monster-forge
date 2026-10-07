@@ -147,7 +147,8 @@ export class NanoBananaService {
       customPrompt = '', 
       creativity = 50, 
       colorPalette = 'original', 
-      customColors = [] 
+      customColors = [],
+      styleReference = null // Optional array of base64 images to match style from
     } = options;
     
     const style = ART_STYLES[styleId] || ART_STYLES.pixel;
@@ -164,6 +165,11 @@ export class NanoBananaService {
     // Add color palette instructions
     prompt += ' ' + this.getColorPalettePrompt(colorPalette, customColors);
     
+    // Add style matching instructions if reference images provided
+    if (styleReference && styleReference.length > 0) {
+      prompt += ' CRITICAL STYLE MATCHING: Analyze the style reference image(s) carefully and match their exact artistic style, color palette, line work quality, shading technique, and overall aesthetic. The new sprite must look like it was created by the same artist in the same session.';
+    }
+    
     if (customPrompt) {
       prompt += ` Additional details: ${customPrompt}`;
     }
@@ -171,12 +177,13 @@ export class NanoBananaService {
     prompt += ' Transparent or simple solid color background. Centered composition.';
     
     console.log('[NanoBanana] Generating with prompt:', prompt);
+    console.log('[NanoBanana] Style reference images:', styleReference?.length || 0);
     
     if (this.useFal) {
-      return this.generateViaFal(prompt, referenceBase64);
+      return this.generateViaFal(prompt, referenceBase64, styleReference);
     }
     
-    return this.generateViaGoogleAPI(prompt, referenceBase64);
+    return this.generateViaGoogleAPI(prompt, referenceBase64, styleReference);
   }
 
   /**
@@ -364,7 +371,7 @@ export class NanoBananaService {
    * Generate via Google's direct API with retry logic
    * Uses gemini-2.0-flash-exp for image generation
    */
-  async generateViaGoogleAPI(prompt, referenceBase64, retryCount = 0) {
+  async generateViaGoogleAPI(prompt, referenceBase64, styleReference = null, retryCount = 0) {
     // Use the imagen-capable model
     const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
 
@@ -389,6 +396,23 @@ export class NanoBananaService {
       });
     }
 
+    // Add style reference images if provided (for style matching)
+    if (styleReference && Array.isArray(styleReference) && styleReference.length > 0) {
+      // Add style reference images with a label
+      requestBody.contents[0].parts.unshift({
+        text: 'Style reference images to match (analyze and replicate their exact artistic style):'
+      });
+      
+      for (const refImg of styleReference.slice(0, 3)) { // Limit to 3 reference images
+        requestBody.contents[0].parts.unshift({
+          inlineData: {
+            mimeType: 'image/png',
+            data: refImg.replace(/^data:image\/\w+;base64,/, '')
+          }
+        });
+      }
+    }
+
     try {
       const response = await fetch(`${endpoint}?key=${this.apiKey}`, {
         method: 'POST',
@@ -402,7 +426,7 @@ export class NanoBananaService {
           const waitTime = Math.pow(2, retryCount + 1) * 5000; // 10s, 20s, 40s
           console.log(`[NanoBanana] Rate limited, waiting ${waitTime/1000}s before retry ${retryCount + 1}/3...`);
           await this.delay(waitTime);
-          return this.generateViaGoogleAPI(prompt, referenceBase64, retryCount + 1);
+          return this.generateViaGoogleAPI(prompt, referenceBase64, styleReference, retryCount + 1);
         }
         throw new Error('Rate limit exceeded. Please wait a few minutes and try again with fewer poses.');
       }
@@ -428,7 +452,7 @@ export class NanoBananaService {
    * Generate via fal.ai hosted API
    * (Alternative endpoint for Nano Banana)
    */
-  async generateViaFal(prompt, referenceBase64) {
+  async generateViaFal(prompt, referenceBase64, styleReference = null) {
     const endpoint = 'https://fal.run/fal-ai/nano-banana';
 
     const requestBody = {
@@ -440,6 +464,16 @@ export class NanoBananaService {
 
     if (referenceBase64) {
       requestBody.image_urls = [referenceBase64];
+    }
+    
+    // Add style reference images if provided
+    if (styleReference && Array.isArray(styleReference) && styleReference.length > 0) {
+      // fal.ai may support additional reference images differently
+      // For now, we'll add them to image_urls
+      requestBody.image_urls = [
+        ...(requestBody.image_urls || []),
+        ...styleReference.slice(0, 3)
+      ];
     }
 
     const response = await fetch(endpoint, {
